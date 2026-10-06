@@ -2,7 +2,7 @@
 
 A pocket budget tracker that installs on your phone like an app. Logging a purchase takes three taps: amount, category, save.
 
-Your transactions are stored only on the device you use, in the browser's storage for this site. Nothing is sent to a server, so this folder contains no personal data and can safely be public.
+Your transactions are stored only on your device: in the browser's storage for this site, and in a save file you choose. Nothing is sent to a server, so this folder contains no personal data and can safely be public.
 
 ## Put it online (once, about 5 minutes)
 
@@ -41,9 +41,22 @@ On first open, tap **Load starter file** and pick `budget-starter.json`. Then go
   - **Roll over:** moves unspent flexible money into the lumpsum fund. Do the same transfer in your banking app.
 - **Icon shortcuts:** long-press the Beursie icon for Add expense, Today, Overview and Month review. Android picks up new shortcuts when it next refreshes the installed app, usually within a day. If they don't appear, remove and reinstall the app (back up first).
 
-## Google Drive backup (one-time setup, about 10 minutes)
+## Save file: keep your data safe (one tap)
 
-Beursie can save its backup file to your own Google Drive every week. It can only see the file it creates, not the rest of your Drive. Google requires you to register the app once:
+The app's own copy of your data lives in the browser, so clearing Chrome's **Cookies and site data** erases it. (Clearing only **Cached images and files** is safe.) To protect yourself, give Beursie a save file:
+
+1. Go to **Budget → Save file → Choose where to save**.
+2. Pick **Google Drive** (or Downloads) in the file screen and save. Beursie names the file `Beursie data.json`.
+
+From then on every change is written to that file automatically. If the browser is ever cleared, or you get a new phone, open Beursie, tap **Open my save file** and pick it. Everything comes back and Beursie keeps saving to it.
+
+After you reopen the app, Chrome may ask once whether Beursie can keep editing the file. Tap **Allow**.
+
+This works in Chrome on Android and on computers. Safari on iPhone and Firefox can't do it, so use **Back up everything** there instead.
+
+## Google Drive backup (advanced, optional)
+
+You don't need this if you use a save file in Google Drive. It's an older option that connects to Drive directly. Beursie can save its backup file to your own Google Drive every week. It can only see the file it creates, not the rest of your Drive. Google requires you to register the app once:
 
 1. Go to https://console.cloud.google.com and create a project called **Beursie**.
 2. Open **APIs & Services → Library**, search **Google Drive API** and click **Enable**.
@@ -64,7 +77,7 @@ Bank imports don't create duplicates. If you logged R85 by hand and it later sho
 - **Export CSV for Claude** gives you every transaction plus your budget in one file. Attach it to a chat for a monthly review.
 - **Overview → Copy summary for Claude** copies a short text summary you can paste into a chat.
 
-Beursie reminds you if your last backup is more than 30 days old. If you clear your browser's site data or uninstall the app, everything not backed up is lost.
+If you have no save file, Beursie reminds you to set one up (or, on iPhone, to back up if your last backup is more than 30 days old). Without a save file or backup, clearing your browser's site data or uninstalling the app loses everything.
 
 ## Updating the app
 
