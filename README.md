@@ -27,6 +27,8 @@ On first open, tap **Load starter file** and pick `budget-starter.json`. Then go
 - **Add:** choose *Spent*, *Received* (income) or *Moved* (between your own accounts), type the amount, tap a category, then tap Save. Swipe the category strip sideways for more; your most-used ones come first. Savings like the lumpsum fund are categories too, so a contribution is logged as *Spent → Lumpsum fund*. Going over the warning level pops up a message (and a phone notification, if you've turned those on).
 - **Overview:** tap any warning, category or the fund card to jump to its transactions. Phone back button returns you.
    shows what's left to spend this budget month (25th to 24th) and a daily allowance. It also shows warnings, every category's progress, your lumpsum fund against its emergency floor, and a 6-month trend.
+- **Today:** your flexible budget left, divided by the days left, is what you can spend today. Spending today fills the bar; tomorrow it recalculates, so overspending today lowers tomorrow's number (and underspending raises it). The Add screen shows today's bar too.
+- **Planned vs actual:** a running-total chart of this month's flexible spending against an even pace to budget, with a dotted line showing where you'll end up at your current pace.
 - **History:** browse by budget month and filter by category. Tap any entry to edit it. When you give an imported shop a category, Beursie remembers it for next time.
 - **Budget:** change amounts, add or remove categories, and set up monthly payments that are added automatically (rent, tithe, subscriptions, savings).
 

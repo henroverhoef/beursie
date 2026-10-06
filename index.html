@@ -244,6 +244,22 @@ function summary(p){
   const uncat = S.tx.filter(t => t.kind==='expense' && !t.catId && inPeriod(t,p)).reduce((a,t)=>a+t.amount,0);
   return { sp, flexBudget, flexSpent, total, uncat };
 }
+const isFlex = c => c && !c.fixed && c.group !== 'Saving';
+function flexSpentOn(p, from, to){ // inclusive ISO dates within period
+  let a = 0;
+  for (const t of S.tx){ if (!countsInBudget(t) || !inPeriod(t,p) || t.date < from || t.date > to) continue; const c = catById(t.catId); if (isFlex(c)) a += t.amount; }
+  return round2(a);
+}
+function daily(){
+  const p = periodOf(today()), td = iso(today());
+  const flexBudget = S.categories.filter(isFlex).reduce((a,c)=>a+(+c.budget||0),0);
+  const before = flexSpentOn(p, iso(p.start), iso(new Date(today().getTime()-86400000)));
+  const spent = flexSpentOn(p, td, td);
+  const daysLeft = daysBetween(today(), p.end) + 1;
+  const allowance = Math.max(0, (flexBudget - before) / daysLeft);
+  const tomorrow = daysLeft > 1 ? Math.max(0, (flexBudget - before - spent) / (daysLeft - 1)) : 0;
+  return { p, flexBudget, before, spent, daysLeft, allowance, tomorrow, left: allowance - spent };
+}
 function catState(c, spent){
   const b = +c.budget || 0;
   if (!b) return spent > 0 ? 'bad' : 'none';
@@ -543,6 +559,7 @@ function renderAdd(){
       <button data-kind="income" aria-pressed="${kind==='income'}">Received</button>
       <button data-kind="transfer" aria-pressed="${kind==='transfer'}">Moved</button>
     </div>
+    ${kind === 'expense' ? dailyCard(true) : ''}
     <div class="amount num ${amt?'':'empty'}" aria-live="polite"><span class="cur">R</span>${amt ? esc(amt) : '0'}</div>
     ${kind === 'expense' ? `<div class="chips" id="chips">${usageOrder().map(c => {
       const s = sp[c.id]||0, left = (+c.budget||0) - s, st = catState(c, s);
@@ -559,6 +576,7 @@ function renderAdd(){
     ${kind === 'expense' ? `<label class="toggle"><input type="checkbox" id="ff" ${draft.fromFund?'checked':''}> Paid from lumpsum fund <span class="muted" style="font-size:.8rem">(${R(Math.max(0, fb-fl))} free above floor)</span></label>` : ''}
     <button class="primary" id="saveTx" ${ready ? '' : 'disabled'}>${label}</button>
   </div>`;
+  const tc = app.querySelector('[data-act="today"]'); if (tc) tc.onclick = () => go('history', { filter:'@today' });
   app.querySelector('#kind').onclick = e => { const b = e.target.closest('[data-kind]'); if (!b) return; draft.kind = b.dataset.kind; if (draft.kind !== 'expense'){ draft.catId = null; draft.fromFund = false; } renderAdd(); };
   app.querySelector('#pad').onclick = e => { const b = e.target.closest('[data-k]'); if (b) key(b.dataset.k); };
   const chips = app.querySelector('#chips');
@@ -598,7 +616,11 @@ function saveDraft(){
     else toast(`Saved from the fund. ${R(after)} left in it.`);
   } else {
     const r = checkThresholds(t.catId);
-    toast(`Saved. ${r ? r.msg : ''}`, r && r.lvl ? r.lvl : '');
+    if (isFlex(catById(t.catId)) && t.date === iso(today()) && !(r && r.lvl === 'bad')){
+      const d = daily();
+      if (d.left < 0) toast(`Saved. You're ${R(-d.left)} over today's ${R(d.allowance)}. Tomorrow's allowance drops to ${R(d.tomorrow)}.`, 'warn');
+      else toast(`Saved. ${R(d.left)} left to spend today.${r && r.lvl ? ' ' + r.msg : ''}`, r && r.lvl ? r.lvl : '');
+    } else toast(`Saved. ${r ? r.msg : ''}`, r && r.lvl ? r.lvl : '');
   }
   renderAdd();
 }
@@ -617,9 +639,10 @@ function renderOverview(){
     <section class="hero" aria-label="Left to spend">
       <div class="eyebrow" style="color:inherit;opacity:.85">Left to spend · ${esc(p.label)}</div>
       <div class="big num">${R(remain)}</div>
-      <div class="sub">${remain > 0 ? `About ${R(perDay)} a day for the next ${left} day${left>1?'s':''}.` : 'Flexible budget is used up for this period.'} ${R(flexSpent)} of ${R(flexBudget)} spent.</div>
+      <div class="sub">${R(flexSpent)} of ${R(flexBudget)} flexible budget spent, ${left} day${left>1?'s':''} to go.</div>
       <div class="pace" aria-hidden="true"><i style="width:${flexBudget?Math.min(100,flexSpent/flexBudget*100):0}%"></i><em style="left:${gone/len*100}%"></em></div>
     </section>
+    ${dailyCard()}
     ${alerts.length ? `<div class="alerts">${alerts.map(a => {
       const go = a.cat ? `data-cat="${a.cat}"` : a.action ? `data-act="${a.action}"` : '';
       const cta = a.action==='review' ? 'Review' : a.action==='backup' ? 'Back up now' : a.cat || a.action ? 'See transactions' : '';
@@ -645,6 +668,7 @@ function renderOverview(){
       <div class="row between num"><span class="muted">Free for big purchases</span><b style="color:var(--${fb>=fl?'good':'bad'})">${R(Math.max(0, fb-fl))}</b></div>
       <div class="bar" style="height:8px"><i class="${fb<fl?'bad':''}" style="width:${fl?Math.min(100,fb/fl*100):100}%"></i></div>
     </div>
+    <div class="card stack chart"><h2>This month: planned vs actual</h2>${burnChart()}<p class="muted" style="margin:0;font-size:.8rem">Running total of flexible spending. Dashed: spending evenly to budget. Dotted: where you'll end up at your current pace.</p></div>
     <div class="card stack chart"><h2>Flexible spending by period</h2>${trendChart()}<p class="muted" style="margin:0;font-size:.8rem">Bars are what you spent on flexible categories; the line is your flexible budget.</p></div>
     <button class="ghost" data-act="claude">Copy summary for Claude</button>
   </div>`;
@@ -655,10 +679,56 @@ function renderOverview(){
     if (a.dataset.act === 'fund') go('history', { filter:'@fund' });
     if (a.dataset.act === 'flex') go('history', { filter:'@flex' });
     if (a.dataset.act === 'income') go('history', { filter:'@in' });
+    if (a.dataset.act === 'today') go('history', { filter:'@today' });
     if (a.dataset.act === 'backup') doBackup();
     if (a.dataset.act === 'setfund') setFundSheet();
     if (a.dataset.act === 'claude'){ const txt = claudeSummary(); (navigator.clipboard ? navigator.clipboard.writeText(txt) : Promise.reject()).then(()=>toast('Summary copied. Paste it into a chat with Claude.'), ()=>sheet(`<div class="stack"><h2>Summary</h2><textarea style="width:100%;height:240px">${esc(txt)}</textarea></div>`)); }
   };
+}
+function dailyCard(compact){
+  const d = daily(), pct = d.allowance ? d.spent / d.allowance * 100 : (d.spent ? 101 : 0);
+  const st = pct > 100.5 ? 'bad' : pct >= S.alertPct ? 'warn' : 'good';
+  const msg = d.allowance <= 0 ? 'Nothing left for flexible spending this period.'
+    : d.left >= 0 ? `${R(d.left)} left today` : `${R(-d.left)} over today`;
+  const next = d.daysLeft > 1 ? `Tomorrow: ${R(d.tomorrow)}` : 'Last day of the period';
+  if (compact) return `<button class="card tapcard" data-act="today" style="width:100%;text-align:left;color:inherit;padding:10px 12px"><div class="row between num" style="font-size:.88rem"><span><b>Today</b> ${R(d.spent)} <span class="muted">of ${R(d.allowance)}</span></span><span class="${st==='bad'?'danger':'muted'}">${msg}</span></div><div class="bar" style="height:6px;margin-top:6px"><i class="${st==='good'?'':st}" style="width:${Math.min(100,pct)}%"></i></div></button>`;
+  return `<button class="card tapcard stack" data-act="today" style="width:100%;text-align:left;color:inherit;gap:8px">
+    <div class="row between"><span class="eyebrow">Today · ${short(today())}</span><span class="pill ${st}">${st==='bad'?'Over':st==='warn'?Math.round(pct)+'%':'On track'}</span></div>
+    <div class="row between num" style="align-items:baseline"><span><b style="font-family:var(--display);font-size:1.6rem">${R(d.spent)}</b> <span class="muted">of ${R(d.allowance)} you can spend today</span></span></div>
+    <div class="bar" style="height:10px"><i class="${st==='good'?'':st}" style="width:${Math.min(100,pct)}%"></i></div>
+    <div class="row between num" style="font-size:.85rem"><span class="${st==='bad'?'danger':'muted'}">${msg}</span><span class="muted">${next} ›</span></div>
+  </button>`;
+}
+function burnChart(){
+  const d = daily(), p = d.p, len = daysBetween(p.start, p.end) + 1, gone = len - d.daysLeft + 1;
+  const cum = []; let run = 0;
+  const byDay = {};
+  for (const t of S.tx){ if (!countsInBudget(t) || !inPeriod(t,p)) continue; const c = catById(t.catId); if (isFlex(c)) byDay[t.date] = (byDay[t.date]||0) + t.amount; }
+  for (let i = 0; i < gone; i++){ const ds = iso(new Date(p.start.getFullYear(), p.start.getMonth(), p.start.getDate()+i)); run += byDay[ds]||0; cum.push(run); }
+  const pace = gone ? run / gone : 0, projected = pace * len, B = d.flexBudget;
+  const W = 340, H = 170, L = 6, Rm = 64, T = 12, Bm = 22;
+  const max = Math.max(B, projected, run, 1) * 1.08;
+  const x = i => L + (W - L - Rm) * (i / (len - 1 || 1)), y = v => T + (H - T - Bm) * (1 - v / max);
+  const actual = cum.map((v,i) => `${x(i)},${y(v)}`).join(' ');
+  const area = `${x(0)},${y(0)} ${actual} ${x(gone-1)},${y(0)}`;
+  const over = projected > B * 1.005;
+  const ticks = [0, Math.floor((len-1)/2), len-1].map(i => { const dt = new Date(p.start.getFullYear(), p.start.getMonth(), p.start.getDate()+i); return `<text x="${x(i)}" y="${H-6}" text-anchor="${i===0?'start':i===len-1?'end':'middle'}">${short(dt)}</text>`; }).join('');
+  const lab = (v, txt, cls) => `<text x="${W-Rm+6}" y="${y(v)+4}" style="fill:var(--${cls})">${txt}</text>`;
+  let yB = y(B), yP = y(projected); if (Math.abs(yB - yP) < 13){ if (yP < yB) yP = yB - 13; else yP = yB + 13; }
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Running flexible spending against an even pace to budget">
+    <line x1="${L}" x2="${W-Rm}" y1="${y(0)}" y2="${y(0)}" style="stroke:var(--line)"/>
+    <line x1="${L}" x2="${W-Rm}" y1="${y(B)}" y2="${y(B)}" style="stroke:var(--line);stroke-dasharray:2 3"/>
+    <polyline points="${x(0)},${y(0)} ${x(len-1)},${y(B)}" style="fill:none;stroke:var(--muted);stroke-width:1.5;stroke-dasharray:5 4"/>
+    <polygon points="${area}" style="fill:var(--${over?'bad':'accent'});opacity:.12"/>
+    <polyline points="${actual}" style="fill:none;stroke:var(--${over?'bad':'accent'});stroke-width:2.5;stroke-linejoin:round"/>
+    <polyline points="${x(gone-1)},${y(run)} ${x(len-1)},${y(projected)}" style="fill:none;stroke:var(--${over?'bad':'accent'});stroke-width:1.5;stroke-dasharray:1.5 3.5"/>
+    <circle cx="${x(gone-1)}" cy="${y(run)}" r="4" style="fill:var(--${over?'bad':'accent'})"/>
+    <text x="${x(gone-1)}" y="${y(run)-9}" text-anchor="${gone-1 > len*0.7 ? 'end' : 'middle'}" style="fill:var(--ink);font-weight:600">${R(run)}</text>
+    <text x="${W-Rm+6}" y="${yB+4}" style="fill:var(--muted)">Budget</text>
+    <text x="${W-Rm+6}" y="${yB+16}" style="fill:var(--muted)">${Math.round(B/100)/10}k</text>
+    ${Math.abs(projected - B) > B*0.03 ? `<text x="${W-Rm+6}" y="${yP+4 + (yP<yB?-12:12)}" style="fill:var(--${over?'bad':'good'});font-weight:600">→ ${Math.round(projected/100)/10}k</text>` : ''}
+    ${ticks}
+  </svg>`;
 }
 function trendChart(){
   const cur = periodOf(today()), ps = [];
@@ -690,6 +760,7 @@ function renderHistory(){
   const fundCat = c => c && c.fund;
   if (histFilter === 'review') list = S.tx.filter(t => t.kind==='expense' && !t.catId);
   else if (histFilter === '@in') list = list.filter(t => t.kind !== 'expense');
+  else if (histFilter === '@today') list = S.tx.filter(t => t.date === iso(today()));
   else if (histFilter === '@fund') list = S.tx.filter(t => t.kind==='expense' && (t.fromFund || fundCat(catById(t.catId))));
   else if (histFilter === '@flex') list = list.filter(t => { const c = catById(t.catId); return countsInBudget(t) && c && !c.fixed && c.group !== 'Saving'; });
   else if (histFilter !== 'all') list = list.filter(t => t.catId === histFilter);
@@ -699,12 +770,13 @@ function renderHistory(){
   const days = {}; list.forEach(t => (days[t.date] = days[t.date] || []).push(t));
   app.innerHTML = `
   <div class="topbar"><div class="brand">History</div>
-    ${histFilter==='review' || histFilter==='@fund' ? '' : `<div class="row"><button class="ghost" data-nav="-1" aria-label="Previous period">‹</button><span class="num" style="font-size:.85rem">${esc(p.label)}</span><button class="ghost" data-nav="1" aria-label="Next period">›</button></div>`}</div>
+    ${histFilter==='review' || histFilter==='@fund' || histFilter==='@today' ? '' : `<div class="row"><button class="ghost" data-nav="-1" aria-label="Previous period">‹</button><span class="num" style="font-size:.85rem">${esc(p.label)}</span><button class="ghost" data-nav="1" aria-label="Next period">›</button></div>`}</div>
   <div class="scroller" id="filters">
     <button class="ghost" data-f="all" aria-pressed="${histFilter==='all'}">All</button>
     ${reviewN ? `<button class="ghost" data-f="review" aria-pressed="${histFilter==='review'}">Needs category (${reviewN})</button>` : ''}
     ${S.categories.map(c=>`<button class="ghost" data-f="${c.id}" aria-pressed="${histFilter===c.id}">${esc(c.name)}</button>`).join('')}
     <button class="ghost" data-f="@in" aria-pressed="${histFilter==='@in'}">Income & transfers</button>
+    <button class="ghost" data-f="@today" aria-pressed="${histFilter==='@today'}">Today</button>
     <button class="ghost" data-f="@flex" aria-pressed="${histFilter==='@flex'}">Flexible only</button>
     <button class="ghost" data-f="@fund" aria-pressed="${histFilter==='@fund'}">Fund in & out</button>
   </div>
@@ -725,6 +797,7 @@ function renderHistory(){
   };
 }
 function histHeader(p){
+  if (histFilter === '@today'){ const d = daily(); return `<div class="card row between" style="margin-top:10px"><span class="num"><span class="eyebrow">Today's flexible spending</span><br><b>${R(d.spent)}</b> <span class="muted">of ${R(d.allowance)}</span></span><button class="ghost" data-add="">+ Add</button></div>`; }
   if (histFilter === '@in') return `<div class="card row between" style="margin-top:10px"><span><span class="eyebrow">Money in</span><br><b class="num">${R(incomeIn(p))}</b></span><button class="ghost" data-add="" data-kind="income">+ Add income</button></div>`;
   if (histFilter === '@fund'){ const fb = fundBalance(), fl = floorAmt(), fc = S.categories.find(c => c.fund);
     return `<div class="card stack" style="margin-top:10px;gap:6px"><div class="row between num"><span class="muted">Balance</span><b>${R(fb)}</b></div><div class="row between num"><span class="muted">Floor</span><span>${R(fl)}</span></div>${fc?`<button class="ghost" data-add="${fc.id}" data-amt="${Math.max(0,(+fc.budget||0)-(spentBy(periodOf(today()))[fc.id]||0))}">+ Add a contribution</button>`:''}</div>`; }
