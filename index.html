@@ -63,6 +63,8 @@ nav.tabs button[aria-current="page"]{color:var(--accent);font-weight:600}
 .amount .cur{color:var(--muted);font-size:1.6rem;margin-right:4px;vertical-align:.7em}
 .amount.empty{color:var(--muted)}
 .chips{display:flex;flex-wrap:wrap;gap:8px}
+#chips{display:grid;grid-auto-flow:column;grid-template-rows:repeat(3,auto);grid-auto-columns:max-content;overflow-x:auto;scrollbar-width:none;margin:0 -16px;padding:0 16px;scroll-padding:16px}
+#chips::-webkit-scrollbar{display:none}
 .chip{border:1px solid var(--line);background:var(--surface);border-radius:12px;padding:6px 9px;text-align:left;display:flex;flex-direction:column;gap:1px;min-width:0;max-width:100%}
 .chip b{font-weight:600;font-size:.88rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .chip small{font-size:.72rem;color:var(--muted)}
@@ -109,6 +111,13 @@ input[type=text],input[type=number],input[type=date],select{background:var(--sur
 .pill{font-size:.7rem;font-weight:700;padding:2px 7px;border-radius:99px;background:var(--chip);color:var(--muted);letter-spacing:.02em}
 .pill.warn{background:var(--warn-soft);color:var(--warn)} .pill.bad{background:var(--bad-soft);color:var(--bad)} .pill.good{background:var(--accent-soft);color:var(--good)}
 .groupname{margin-top:10px}
+.seg{display:grid;grid-template-columns:repeat(3,1fr);background:var(--chip);border-radius:12px;padding:3px;gap:3px}
+.seg button{border:0;background:none;border-radius:9px;padding:8px 4px;font-weight:600;font-size:.88rem;color:var(--muted)}
+.seg button[aria-pressed="true"]{background:var(--surface);color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.12)}
+button.cat{width:100%;background:none;border:0;border-top:1px solid var(--line);text-align:left}
+button.alert{border:0;width:100%;text-align:left;color:inherit}
+.tapcard{cursor:pointer}
+.chev{color:var(--muted);font-size:1.1rem;line-height:1}
 .chart svg{width:100%;height:auto;display:block}
 .chart text{fill:var(--muted);font-size:11px;font-family:var(--body)}
 
@@ -273,15 +282,15 @@ function alertsFor(p){
   for (const c of S.categories){
     if (c.group === 'Saving') continue;
     const s = sp[c.id] || 0, st = catState(c, s);
-    if (st === 'bad') out.push({ lvl:'bad', text:`${c.name} is over budget: ${R(s)} of ${R(+c.budget||0)}.` });
-    else if (st === 'warn' && !c.fixed) out.push({ lvl:'warn', text:`${c.name} is at ${Math.round(s/c.budget*100)}% with ${len-gone} days to go.` });
+    if (st === 'bad') out.push({ lvl:'bad', cat:c.id, text:`${c.name} is over budget: ${R(s)} of ${R(+c.budget||0)}.` });
+    else if (st === 'warn' && !c.fixed) out.push({ lvl:'warn', cat:c.id, text:`${c.name} is at ${Math.round(s/c.budget*100)}% with ${len-gone} days to go.` });
   }
   if (flexBudget && p.key === periodOf(now).key){
     const spentPct = flexSpent/flexBudget*100, timePct = gone/len*100;
-    if (spentPct > timePct + 15) out.push({ lvl:'warn', text:`You're ahead of pace: ${Math.round(spentPct)}% of flexible money spent, ${Math.round(timePct)}% of the month gone.` });
+    if (spentPct > timePct + 15) out.push({ lvl:'warn', action:'flex', text:`You're ahead of pace: ${Math.round(spentPct)}% of flexible money spent, ${Math.round(timePct)}% of the month gone.` });
   }
   const fb = fundBalance(), fl = floorAmt();
-  if (fl && (S.fundOpening || S.tx.some(t=>t.fromFund)) && fb < fl) out.push({ lvl:'bad', text:`Lumpsum fund is below its emergency floor (${R(fb)} of ${R(fl)}). Double the contribution until it's back.` });
+  if (fl && (S.fundOpening || S.tx.some(t=>t.fromFund)) && fb < fl) out.push({ lvl:'bad', action:'fund', text:`Lumpsum fund is below its emergency floor (${R(fb)} of ${R(fl)}). Double the contribution until it's back.` });
   const rev = S.tx.filter(t => t.kind==='expense' && !t.catId).length;
   if (rev) out.push({ lvl:'info', text:`${rev} imported transaction${rev>1?'s':''} need a category.`, action:'review' });
   const lastEx = S.lastExport ? daysBetween(parseISO(S.lastExport), now) : null;
@@ -384,9 +393,9 @@ function planImport(text){
     used.add(bankKey);
     if (existing.has(bankKey)){ plan.dupes++; continue; }
     const cls = classify(desc, amount), abs = Math.abs(amount);
-    if (cls.kind === 'expense'){
+    {
       const bd = parseISO(date);
-      const cand = S.tx.find(t => !t.bankKey && t.kind==='expense' && !plan.matched.some(m=>m.tx===t) && (() => {
+      const cand = S.tx.find(t => !t.bankKey && t.kind===cls.kind && !plan.matched.some(m=>m.tx===t) && (() => {
         const dd = Math.abs(daysBetween(parseISO(t.date), bd));
         if (t.source === 'recurring') return dd <= 6 && Math.abs(t.amount - abs) <= Math.max(2, abs*0.06) && (!cls.catId || cls.catId === t.catId);
         return dd <= 3 && Math.abs(t.amount - abs) < 0.01;
@@ -452,14 +461,29 @@ function claudeSummary(){
 
 /* ---------- UI plumbing ---------- */
 const app = document.getElementById('app'), layer = document.getElementById('layer');
-let tab = 'add', histPeriod = null, histFilter = 'all', draft = { amount:'', catId:null, note:'', date:null, fromFund:false };
+let tab = 'add', histPeriod = null, histFilter = 'all', draft = { kind:'expense', amount:'', catId:null, note:'', date:null, fromFund:false };
 let toastTimer;
 function toast(msg, lvl=''){
   document.querySelectorAll('.toast').forEach(t=>t.remove());
   const t = document.createElement('div'); t.className = 'toast ' + lvl; t.setAttribute('role','status'); t.textContent = msg;
   document.body.appendChild(t); clearTimeout(toastTimer); toastTimer = setTimeout(()=>t.remove(), lvl ? 4200 : 2600);
 }
-function go(t){ tab = t; render(); window.scrollTo(0,0); }
+function go(t, opts){
+  opts = opts || {};
+  if (t === 'history'){ histFilter = opts.filter || (tab === 'history' ? histFilter : 'all'); histPeriod = opts.period || (opts.filter ? periodOf(today()) : histPeriod); }
+  tab = t; render(); window.scrollTo(0,0);
+  try { history.pushState({ tab, filter:histFilter, pkey: histPeriod ? histPeriod.key : null }, ''); } catch(e){}
+}
+function openCat(id){ go('history', { filter:id }); }
+window.addEventListener('popstate', e => {
+  const st = e.state; if (layer.innerHTML){ closeSheet(); return; }
+  if (!st) return;
+  tab = st.tab; histFilter = st.filter || 'all'; histPeriod = st.pkey ? periodOf(parseISO(st.pkey)) : null; render(); window.scrollTo(0,0);
+});
+function startAdd(catId, amount, kind){
+  draft = { kind: kind || 'expense', amount: amount ? String(round2(amount)) : '', catId: catId || null, note:'', date:null, fromFund:false };
+  go('add');
+}
 document.querySelector('nav.tabs').addEventListener('click', e => { const b = e.target.closest('[data-tab]'); if (b) go(b.dataset.tab); });
 function closeSheet(){ layer.innerHTML = ''; }
 function sheet(html, bind){
@@ -501,36 +525,47 @@ function renderWelcome(){
 function usageOrder(){
   const since = iso(new Date(Date.now() - 60*86400000)), n = {};
   for (const t of S.tx) if (t.kind==='expense' && t.catId && t.date >= since && t.source !== 'recurring') n[t.catId] = (n[t.catId]||0) + 1;
-  const low = c => (c.fixed ? 2 : 0) + (/bank fee/i.test(c.name) ? 4 : 0);
-  return S.categories.filter(c => !c.fund && c.group !== 'Saving').sort((a,b) => low(a) - low(b) || (n[b.id]||0) - (n[a.id]||0));
+  const low = c => (c.fixed ? 2 : 0) + (/bank fee/i.test(c.name) ? 4 : 0) + (c.group === 'Saving' ? 6 : 0);
+  return S.categories.slice().sort((a,b) => low(a) - low(b) || (n[b.id]||0) - (n[a.id]||0));
 }
 function renderAdd(){
   const p = periodOf(today()), sp = spentBy(p);
-  const amt = draft.amount, amtNum = parseFloat(amt) || 0;
+  const amt = draft.amount, amtNum = parseFloat(amt) || 0, kind = draft.kind || 'expense';
   const date = draft.date || iso(today());
   const fb = fundBalance(), fl = floorAmt();
+  const ready = amtNum > 0 && (kind !== 'expense' || draft.catId);
+  const label = !amtNum ? 'Enter an amount' : !ready ? 'Pick a category' : `Save ${kind==='income'?'income ':kind==='transfer'?'transfer ':''}${R(amtNum, amt.includes('.')?2:0)}`;
   app.innerHTML = `
   <div class="topbar"><div class="brand">Beurs<span>ie</span></div><span class="muted num" style="font-size:.85rem">${esc(p.label)}</span></div>
   <div class="stack">
+    <div class="seg" id="kind" role="group" aria-label="Type of entry">
+      <button data-kind="expense" aria-pressed="${kind==='expense'}">Spent</button>
+      <button data-kind="income" aria-pressed="${kind==='income'}">Received</button>
+      <button data-kind="transfer" aria-pressed="${kind==='transfer'}">Moved</button>
+    </div>
     <div class="amount num ${amt?'':'empty'}" aria-live="polite"><span class="cur">R</span>${amt ? esc(amt) : '0'}</div>
-    <div class="chips" id="chips">${usageOrder().map(c => {
+    ${kind === 'expense' ? `<div class="chips" id="chips">${usageOrder().map(c => {
       const s = sp[c.id]||0, left = (+c.budget||0) - s, st = catState(c, s);
-      const sub = c.budget ? (left >= 0 ? `${R(left)} left` : `${R(-left)} over`) : 'no budget';
-      return `<button class="chip" data-cat="${c.id}" aria-pressed="${draft.catId===c.id}"><b>${esc(c.name)}</b><small class="${st==='bad'?'bad':st==='warn'?'warn':''}">${sub}</small></button>`;
-    }).join('')}</div>
+      const sub = c.group === 'Saving' ? (left > 0 ? `${R(left)} to go` : 'done') : c.budget ? (left >= 0 ? `${R(left)} left` : `${R(-left)} over`) : 'no budget';
+      return `<button class="chip" data-cat="${c.id}" aria-pressed="${draft.catId===c.id}"><b>${esc(c.name)}</b><small class="${c.group!=='Saving'&&st==='bad'?'bad':c.group!=='Saving'&&st==='warn'?'warn':''}">${sub}</small></button>`;
+    }).join('')}</div>` : `<p class="muted" style="margin:0;font-size:.88rem">${kind==='income'
+      ? 'Money that came in: salary, a sale, a refund. It shows under History → Income & transfers and doesn’t affect your budget.'
+      : 'Money moved between your own accounts. It’s recorded but not counted as spending. To put money into the lumpsum fund, use Spent → Lumpsum fund instead, so the fund balance goes up.'}</p>`}
     <div class="pad" id="pad">${['1','2','3','4','5','6','7','8','9','.','0','⌫'].map(k=>`<button data-k="${k}" aria-label="${k==='⌫'?'Delete':k}">${k}</button>`).join('')}</div>
     <div class="row" style="gap:8px">
-      <input type="text" id="note" placeholder="Note (optional)" value="${esc(draft.note)}" style="flex:1">
+      <input type="text" id="note" placeholder="${kind==='income'?'From (e.g. Salary, iFlight sale)':kind==='transfer'?'Where to (e.g. to savings)':'Note (optional)'}" value="${esc(draft.note)}" style="flex:1">
       <input type="date" id="date" value="${date}" style="width:auto;flex:none">
     </div>
-    <label class="toggle"><input type="checkbox" id="ff" ${draft.fromFund?'checked':''}> Paid from lumpsum fund <span class="muted" style="font-size:.8rem">(${R(Math.max(0, fb-fl))} free above floor)</span></label>
-    <button class="primary" id="saveTx" ${amtNum>0 && draft.catId ? '' : 'disabled'}>${amtNum>0 && draft.catId ? `Save ${R(amtNum, amt.includes('.')?2:0)}` : (amtNum>0 ? 'Pick a category' : 'Enter an amount')}</button>
+    ${kind === 'expense' ? `<label class="toggle"><input type="checkbox" id="ff" ${draft.fromFund?'checked':''}> Paid from lumpsum fund <span class="muted" style="font-size:.8rem">(${R(Math.max(0, fb-fl))} free above floor)</span></label>` : ''}
+    <button class="primary" id="saveTx" ${ready ? '' : 'disabled'}>${label}</button>
   </div>`;
+  app.querySelector('#kind').onclick = e => { const b = e.target.closest('[data-kind]'); if (!b) return; draft.kind = b.dataset.kind; if (draft.kind !== 'expense'){ draft.catId = null; draft.fromFund = false; } renderAdd(); };
   app.querySelector('#pad').onclick = e => { const b = e.target.closest('[data-k]'); if (b) key(b.dataset.k); };
-  app.querySelector('#chips').onclick = e => { const b = e.target.closest('[data-cat]'); if (!b) return; draft.catId = draft.catId === b.dataset.cat ? null : b.dataset.cat; renderAdd(); };
+  const chips = app.querySelector('#chips');
+  if (chips) chips.onclick = e => { const b = e.target.closest('[data-cat]'); if (!b) return; draft.catId = draft.catId === b.dataset.cat ? null : b.dataset.cat; renderAdd(); };
   app.querySelector('#note').oninput = e => draft.note = e.target.value;
   app.querySelector('#date').onchange = e => draft.date = e.target.value;
-  app.querySelector('#ff').onchange = e => draft.fromFund = e.target.checked;
+  const ff = app.querySelector('#ff'); if (ff) ff.onchange = e => draft.fromFund = e.target.checked;
   app.querySelector('#saveTx').onclick = saveDraft;
 }
 function key(k){
@@ -542,16 +577,22 @@ function key(k){
 }
 document.addEventListener('keydown', e => {
   if (tab !== 'add' || !S.setupDone || layer.innerHTML || /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) return;
-  if (/^[0-9.]$/.test(e.key)) key(e.key); else if (e.key === 'Backspace') key('⌫'); else if (e.key === 'Enter' && !app.querySelector('#saveTx').disabled) saveDraft();
+  if (/^[0-9.]$/.test(e.key)) key(e.key); else if (e.key === 'Backspace') key('⌫'); else if (e.key === 'Enter' && app.querySelector('#saveTx') && !app.querySelector('#saveTx').disabled) saveDraft();
 });
 function saveDraft(){
-  const amount = round2(parseFloat(draft.amount)); if (!(amount > 0) || !draft.catId) return;
-  const t = { id:uid(), date: draft.date || iso(today()), amount, kind:'expense', catId:draft.catId, note:draft.note.trim(), source:'manual' };
-  if (draft.fromFund) t.fromFund = true;
+  const kind = draft.kind || 'expense';
+  const amount = round2(parseFloat(draft.amount)); if (!(amount > 0) || (kind === 'expense' && !draft.catId)) return;
+  const t = { id:uid(), date: draft.date || iso(today()), amount, kind, catId: kind === 'expense' ? draft.catId : null, note:draft.note.trim(), source:'manual' };
+  if (kind === 'expense' && draft.fromFund) t.fromFund = true;
   const before = fundBalance();
   S.tx.push(t); save();
-  draft = { amount:'', catId:null, note:'', date:null, fromFund:false };
-  if (t.fromFund){
+  draft = { kind:'expense', amount:'', catId:null, note:'', date:null, fromFund:false };
+  const c = catById(t.catId);
+  if (kind === 'income') toast(`Saved ${R(amount,2)} received.`);
+  else if (kind === 'transfer') toast(`Saved ${R(amount,2)} moved. Not counted as spending.`);
+  else if (c && c.fund) toast(`Saved. Lumpsum fund is now ${R(fundBalance())}.`);
+  else if (c && c.group === 'Saving') toast(`Saved ${R(amount)} to ${c.name}.`);
+  else if (t.fromFund){
     const after = fundBalance(), fl = floorAmt();
     if (fl && after < fl && before >= fl) { toast(`Saved. This took the lumpsum fund below its floor by ${R(fl-after)}.`, 'bad'); notify('Lumpsum fund is below the emergency floor.'); }
     else toast(`Saved from the fund. ${R(after)} left in it.`);
@@ -563,6 +604,7 @@ function saveDraft(){
 }
 
 /* ---------- overview ---------- */
+const incomeIn = p => S.tx.filter(t => t.kind === 'income' && inPeriod(t, p)).reduce((a,t) => a + t.amount, 0);
 function renderOverview(){
   const p = periodOf(today()), now = today();
   const { sp, flexBudget, flexSpent } = summary(p);
@@ -578,7 +620,12 @@ function renderOverview(){
       <div class="sub">${remain > 0 ? `About ${R(perDay)} a day for the next ${left} day${left>1?'s':''}.` : 'Flexible budget is used up for this period.'} ${R(flexSpent)} of ${R(flexBudget)} spent.</div>
       <div class="pace" aria-hidden="true"><i style="width:${flexBudget?Math.min(100,flexSpent/flexBudget*100):0}%"></i><em style="left:${gone/len*100}%"></em></div>
     </section>
-    ${alerts.length ? `<div class="alerts">${alerts.map(a => `<div class="alert ${a.lvl}"><span class="dot"></span><div style="flex:1">${esc(a.text)} ${a.action==='review'?'<button class="link" data-act="review">Review</button>':''}${a.action==='backup'?'<button class="link" data-act="backup">Back up now</button>':''}</div></div>`).join('')}</div>` : ''}
+    ${alerts.length ? `<div class="alerts">${alerts.map(a => {
+      const go = a.cat ? `data-cat="${a.cat}"` : a.action ? `data-act="${a.action}"` : '';
+      const cta = a.action==='review' ? 'Review' : a.action==='backup' ? 'Back up now' : a.cat || a.action ? 'See transactions' : '';
+      return `<button class="alert ${a.lvl}" ${go}><span class="dot"></span><span style="flex:1">${esc(a.text)} ${cta?`<b style="color:var(--accent);white-space:nowrap">${cta} ›</b>`:''}</span></button>`;
+    }).join('')}</div>` : ''}
+    <button class="card tapcard row between" data-act="income" style="width:100%;text-align:left;color:inherit"><span><span class="eyebrow">Money in this period</span><br><b class="num" style="font-size:1.1rem">${R(incomeIn(p))}</b> <span class="muted" style="font-size:.85rem">of ${R(+S.salary||0)} salary expected</span></span><span class="chev">›</span></button>
     <div class="card">
       ${GROUPS.map(g => {
         const cs = S.categories.filter(c => c.group === g); if (!cs.length) return '';
@@ -587,12 +634,12 @@ function renderOverview(){
           let pill;
           if (c.fixed){ pill = s >= b*0.95 && b ? '<span class="pill good">Paid</span>' : (s ? '<span class="pill">Part paid</span>' : '<span class="pill">Due</span>'); if (st==='bad') pill = '<span class="pill bad">Over</span>'; }
           else pill = st==='bad' ? '<span class="pill bad">Over</span>' : st==='warn' ? `<span class="pill warn">${Math.round(s/b*100)}%</span>` : '';
-          return `<div class="cat"><div class="name">${esc(c.name)} ${pill}</div><div class="fig">${R(s)} <span class="muted">/ ${R(b)}</span></div><div class="bar"><i class="${st==='bad'?'bad':st==='warn'&&!c.fixed?'warn':''}" style="width:${b?Math.min(100,s/b*100):(s?100:0)}%"></i></div></div>`;
+          return `<button class="cat" data-cat="${c.id}"><div class="name">${esc(c.name)} ${pill}</div><div class="fig">${R(s)} <span class="muted">/ ${R(b)}</span> <span class="chev">›</span></div><div class="bar"><i class="${st==='bad'?'bad':st==='warn'&&!c.fixed?'warn':''}" style="width:${b?Math.min(100,s/b*100):(s?100:0)}%"></i></div></button>`;
         }).join('');
       }).join('')}
     </div>
     <div class="card stack">
-      <div class="row between"><h2>Lumpsum fund</h2><button class="link" data-act="setfund">Set balance</button></div>
+      <div class="row between"><h2>Lumpsum fund</h2><span class="row" style="gap:14px"><button class="link" data-act="fund">History</button><button class="link" data-act="setfund">Set balance</button></span></div>
       <div class="row between num"><span class="muted">Balance</span><b>${R(fb)}</b></div>
       <div class="row between num"><span class="muted">Emergency floor (${S.monthsCover} months of essentials)</span><span>${R(fl)}</span></div>
       <div class="row between num"><span class="muted">Free for big purchases</span><b style="color:var(--${fb>=fl?'good':'bad'})">${R(Math.max(0, fb-fl))}</b></div>
@@ -602,8 +649,12 @@ function renderOverview(){
     <button class="ghost" data-act="claude">Copy summary for Claude</button>
   </div>`;
   app.onclick = e => {
+    const cb = e.target.closest('[data-cat]'); if (cb){ openCat(cb.dataset.cat); return; }
     const a = e.target.closest('[data-act]'); if (!a) return;
-    if (a.dataset.act === 'review'){ histFilter = 'review'; histPeriod = null; go('history'); }
+    if (a.dataset.act === 'review') go('history', { filter:'review' });
+    if (a.dataset.act === 'fund') go('history', { filter:'@fund' });
+    if (a.dataset.act === 'flex') go('history', { filter:'@flex' });
+    if (a.dataset.act === 'income') go('history', { filter:'@in' });
     if (a.dataset.act === 'backup') doBackup();
     if (a.dataset.act === 'setfund') setFundSheet();
     if (a.dataset.act === 'claude'){ const txt = claudeSummary(); (navigator.clipboard ? navigator.clipboard.writeText(txt) : Promise.reject()).then(()=>toast('Summary copied. Paste it into a chat with Claude.'), ()=>sheet(`<div class="stack"><h2>Summary</h2><textarea style="width:100%;height:240px">${esc(txt)}</textarea></div>`)); }
@@ -636,8 +687,11 @@ function setFundSheet(){
 function renderHistory(){
   const p = histPeriod || periodOf(today());
   let list = S.tx.filter(t => inPeriod(t, p));
+  const fundCat = c => c && c.fund;
   if (histFilter === 'review') list = S.tx.filter(t => t.kind==='expense' && !t.catId);
-  else if (histFilter === 'other') list = list.filter(t => t.kind !== 'expense');
+  else if (histFilter === '@in') list = list.filter(t => t.kind !== 'expense');
+  else if (histFilter === '@fund') list = S.tx.filter(t => t.kind==='expense' && (t.fromFund || fundCat(catById(t.catId))));
+  else if (histFilter === '@flex') list = list.filter(t => { const c = catById(t.catId); return countsInBudget(t) && c && !c.fixed && c.group !== 'Saving'; });
   else if (histFilter !== 'all') list = list.filter(t => t.catId === histFilter);
   list.sort((a,b) => b.date.localeCompare(a.date) || (b.id > a.id ? 1 : -1));
   const reviewN = S.tx.filter(t => t.kind==='expense' && !t.catId).length;
@@ -645,13 +699,16 @@ function renderHistory(){
   const days = {}; list.forEach(t => (days[t.date] = days[t.date] || []).push(t));
   app.innerHTML = `
   <div class="topbar"><div class="brand">History</div>
-    ${histFilter==='review' ? '' : `<div class="row"><button class="ghost" data-nav="-1" aria-label="Previous period">‹</button><span class="num" style="font-size:.85rem">${esc(p.label)}</span><button class="ghost" data-nav="1" aria-label="Next period">›</button></div>`}</div>
+    ${histFilter==='review' || histFilter==='@fund' ? '' : `<div class="row"><button class="ghost" data-nav="-1" aria-label="Previous period">‹</button><span class="num" style="font-size:.85rem">${esc(p.label)}</span><button class="ghost" data-nav="1" aria-label="Next period">›</button></div>`}</div>
   <div class="scroller" id="filters">
     <button class="ghost" data-f="all" aria-pressed="${histFilter==='all'}">All</button>
     ${reviewN ? `<button class="ghost" data-f="review" aria-pressed="${histFilter==='review'}">Needs category (${reviewN})</button>` : ''}
     ${S.categories.map(c=>`<button class="ghost" data-f="${c.id}" aria-pressed="${histFilter===c.id}">${esc(c.name)}</button>`).join('')}
-    <button class="ghost" data-f="other" aria-pressed="${histFilter==='other'}">Income & transfers</button>
+    <button class="ghost" data-f="@in" aria-pressed="${histFilter==='@in'}">Income & transfers</button>
+    <button class="ghost" data-f="@flex" aria-pressed="${histFilter==='@flex'}">Flexible only</button>
+    <button class="ghost" data-f="@fund" aria-pressed="${histFilter==='@fund'}">Fund in & out</button>
   </div>
+  ${histHeader(p)}
   <p class="muted num" style="margin:10px 0 0;font-size:.85rem">${list.length} transaction${list.length===1?'':'s'}${total?` · ${R(total,2)} counted in budget`:''}</p>
   ${histFilter==='review' && reviewN ? '<p class="muted" style="font-size:.85rem;margin:6px 0 0">Tap one to pick its category. Beursie remembers the shop and files it automatically next time.</p>' : ''}
   <div>${Object.keys(days).map(d => `<div class="day"><div class="eyebrow">${short(parseISO(d))}</div>${days[d].map(t => {
@@ -662,9 +719,24 @@ function renderHistory(){
   }).join('')}</div>`).join('') || '<p class="muted" style="margin-top:24px">Nothing here yet.</p>'}</div>`;
   app.onclick = e => {
     const n = e.target.closest('[data-nav]'); if (n){ histPeriod = shiftPeriod(p, +n.dataset.nav); renderHistory(); return; }
-    const f = e.target.closest('[data-f]'); if (f){ histFilter = f.dataset.f; renderHistory(); return; }
+    const f = e.target.closest('[data-f]'); if (f){ histFilter = f.dataset.f; renderHistory(); f.scrollIntoView && f.scrollIntoView({ block:'nearest', inline:'center' }); return; }
+    const ad = e.target.closest('[data-add]'); if (ad){ const c = catById(ad.dataset.add); startAdd(c && c.id, +ad.dataset.amt || 0, ad.dataset.kind); return; }
     const t = e.target.closest('[data-tx]'); if (t) editTx(S.tx.find(x => x.id === t.dataset.tx));
   };
+}
+function histHeader(p){
+  if (histFilter === '@in') return `<div class="card row between" style="margin-top:10px"><span><span class="eyebrow">Money in</span><br><b class="num">${R(incomeIn(p))}</b></span><button class="ghost" data-add="" data-kind="income">+ Add income</button></div>`;
+  if (histFilter === '@fund'){ const fb = fundBalance(), fl = floorAmt(), fc = S.categories.find(c => c.fund);
+    return `<div class="card stack" style="margin-top:10px;gap:6px"><div class="row between num"><span class="muted">Balance</span><b>${R(fb)}</b></div><div class="row between num"><span class="muted">Floor</span><span>${R(fl)}</span></div>${fc?`<button class="ghost" data-add="${fc.id}" data-amt="${Math.max(0,(+fc.budget||0)-(spentBy(periodOf(today()))[fc.id]||0))}">+ Add a contribution</button>`:''}</div>`; }
+  const c = catById(histFilter); if (!c) return '';
+  const s = spentBy(p)[c.id] || 0, b = +c.budget || 0, left = b - s, st = catState(c, s);
+  const isNow = p.key === periodOf(today()).key;
+  const due = (c.fixed || c.group === 'Saving') && s < b * 0.95;
+  return `<div class="card stack" style="margin-top:10px;gap:8px">
+    <div class="row between num"><span class="muted">${esc(p.label)}</span><span><b>${R(s)}</b> <span class="muted">of ${R(b)}</span></span></div>
+    <div class="bar" style="height:8px"><i class="${st==='bad'?'bad':st==='warn'&&!c.fixed?'warn':''}" style="width:${b?Math.min(100,s/b*100):(s?100:0)}%"></i></div>
+    <div class="row between"><span class="${left<0?'danger':'muted'}" style="font-size:.88rem">${left>=0?`${R(left)} ${due?'still to pay':'left'}`:`${R(-left)} over budget`}</span>
+    ${isNow ? `<button class="ghost" data-add="${c.id}" data-amt="${due?left:0}">${due?`+ Record ${R(left)}`:'+ Add'}</button>` : ''}</div></div>`;
 }
 function editTx(t){
   if (!t) return;
