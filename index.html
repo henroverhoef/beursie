@@ -1062,7 +1062,8 @@ function renderBudget(){
       : `<p class="muted" style="margin:0;font-size:.85rem">${S.drive.connected ? `Connected. Last Drive backup: ${S.drive.last ? short(parseISO(S.drive.last)) : 'not yet'}. Only the backup file Beursie creates is visible to it.` : 'Client ID saved. Connect once to allow Beursie to save its backup file in your Drive.'}</p>
       <button class="primary" id="gNow">${S.drive.connected ? 'Back up to Drive now' : 'Connect Google Drive'}</button>
       ${S.drive.connected ? `<label class="toggle"><input type="checkbox" id="gAuto" ${S.drive.auto?'checked':''}> Back up weekly, automatically when I log something</label>` : ''}
-      <div class="row" style="flex-wrap:wrap"><button class="ghost" id="gRestore" style="flex:1">Restore from Drive</button><button class="ghost" id="gForget" style="flex:1">Disconnect</button></div>`}
+      <p class="muted" style="margin:0;font-size:.78rem;word-break:break-all">Client ID: ${esc(S.drive.clientId)}</p>
+      <div class="row" style="flex-wrap:wrap"><button class="ghost" id="gRestore" style="flex:1">Restore from Drive</button><button class="ghost" id="gForget" style="flex:1">Disconnect &amp; change client ID</button></div>`}
     </div>
   </div>`;
   const num = v => v === '' ? 0 : round2(parseFloat(v) || 0);
@@ -1112,11 +1113,11 @@ function renderBudget(){
     save();
   }));
   app.querySelector('#addFav').onclick = () => { const c = usageOrder()[0]; S.favs.push({ id:uid(), label:'New favourite', amount:0, catId:c ? c.id : null }); save(); renderBudget(); const ins = app.querySelectorAll('.edrow[data-fv] input[data-f="label"]'); const last = ins[ins.length-1]; last.focus(); last.select(); };
-  const gc = app.querySelector('#gSave'); if (gc) gc.onclick = () => { const v = app.querySelector('#gCid').value.trim(); if (!/\.apps\.googleusercontent\.com$/.test(v)) return toast('That doesn\u2019t look like a Google client ID. It ends in .apps.googleusercontent.com.', 'warn'); S.drive.clientId = v; save(); initDrive(); renderBudget(); toast('Saved. Now tap Connect Google Drive.'); };
+  const gc = app.querySelector('#gSave'); if (gc) gc.onclick = () => { const v = app.querySelector('#gCid').value.trim(); if (!/\.apps\.googleusercontent\.com$/.test(v)) return toast('That doesn\u2019t look like a Google client ID. It ends in .apps.googleusercontent.com.', 'warn'); S.drive.clientId = v; tokenClient = null; save(); initDrive(); renderBudget(); toast('Saved. Now tap Connect Google Drive.'); };
   const gn = app.querySelector('#gNow'); if (gn) gn.onclick = () => driveBackup(S.drive.connected ? '' : 'consent');
   const ga = app.querySelector('#gAuto'); if (ga) ga.onchange = e => { S.drive.auto = e.target.checked; save(); };
   const gr = app.querySelector('#gRestore'); if (gr) gr.onclick = driveRestore;
-  const gf = app.querySelector('#gForget'); if (gf) gf.onclick = () => { try { if (driveToken && window.google) google.accounts.oauth2.revoke(driveToken.v, () => {}); } catch(e){} driveToken = null; S.drive = Object.assign(blankState().drive, { clientId:S.drive.clientId }); save(); renderBudget(); toast('Disconnected from Google Drive.'); };
+  const gf = app.querySelector('#gForget'); if (gf) gf.onclick = () => { try { if (driveToken && window.google) google.accounts.oauth2.revoke(driveToken.v, () => {}); } catch(e){} driveToken = null; tokenClient = null; tokenWait = null; S.drive = blankState().drive; save(); renderBudget(); toast('Disconnected. Paste your new client ID to connect again.'); };
   app.querySelector('#dCSV').onclick = async () => { if (await deliver(`beursie-transactions-${iso(today())}.csv`, exportCSV(), 'text/csv')) toast('Exported. Share the CSV with Claude to review your month.'); };
   app.querySelector('#dBackup').onclick = doBackup;
   app.querySelector('#dRestore').onclick = () => pickFile('json');
