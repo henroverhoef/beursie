@@ -32,6 +32,28 @@ On first open, tap **Load starter file** and pick `budget-starter.json`. Then go
 - **History:** browse by budget month and filter by category. Tap any entry to edit it. When you give an imported shop a category, Beursie remembers it for next time.
 - **Budget:** change amounts, add or remove categories, and set up monthly payments that are added automatically (rent, tithe, subscriptions, savings).
 
+## Favourites, goals and the month review
+
+- **Favourites:** the ★ row on the Add screen logs a purchase in one tap, and Undo appears for a few seconds in case you tapped by mistake. Save one from the Add screen with "☆ Save … as a favourite", or add suggestions in Budget → Favourites. Suggestions are purchases you've made 3 or more times at the same amount.
+- **Fund goals:** go to Overview → Lumpsum fund → Goals. Goals sit inside the fund, above the emergency floor. When you log a fund contribution and the floor is already full, each goal gets its "per contribution" amount until it reaches its target, and the rest stays free money. You can also move money in or out of a goal by hand. When you pay for something from the fund, choose which goal it came from.
+- **Month review:** opens after each budget month ends (Overview banner, or Budget → Month review). It shows money in, living costs, savings and each category against its budget.
+  - **Check against your bank:** pick the month's bank CSV. Beursie lists what it missed, where amounts differ and what's in Beursie but not on the statement. Nothing changes until you tap to add or fix.
+  - **Roll over:** moves unspent flexible money into the lumpsum fund. Do the same transfer in your banking app.
+- **Icon shortcuts:** long-press the Beursie icon for Add expense, Today, Overview and Month review. Android picks up new shortcuts when it next refreshes the installed app, usually within a day. If they don't appear, remove and reinstall the app (back up first).
+
+## Google Drive backup (one-time setup, about 10 minutes)
+
+Beursie can save its backup file to your own Google Drive every week. It can only see the file it creates, not the rest of your Drive. Google requires you to register the app once:
+
+1. Go to https://console.cloud.google.com and create a project called **Beursie**.
+2. Open **APIs & Services → Library**, search **Google Drive API** and click **Enable**.
+3. Open **Google Auth Platform** (called *OAuth consent screen* in older layouts) and click **Get started**. Enter the app name Beursie and your email. Choose **External** as the audience, then create it.
+4. Under **Audience → Test users**, add your own Gmail address. Leaving the app in *Testing* is fine for personal use.
+5. Open **Clients → Create client**, choose **Web application**, and under **Authorized JavaScript origins** add `https://henroverhoef.github.io`. Create it and copy the **Client ID** (it ends in `.apps.googleusercontent.com`).
+6. In Beursie, go to **Budget → Google Drive backup**, paste the client ID, tap **Save**, then **Connect Google Drive**. Google will say the app isn't verified; tap **Continue**, since it's your own app.
+
+After that, Beursie backs up automatically once a week, the next time you log something. Google may flash a sign-in window briefly while it does this. **Restore from Drive** brings everything back on a new phone. A client ID is not a secret, but it only works from your GitHub Pages address.
+
 ## Bank imports and doubles
 
 Bank imports don't create duplicates. If you logged R85 by hand and it later shows up on your statement, the import matches it to your entry. It does the same for automatic monthly payments when the amount and date are close. Rows you've already imported are skipped.
