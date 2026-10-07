@@ -50,7 +50,7 @@ The app's own copy of your data lives in the browser, so clearing Chrome's **Coo
 
 From then on every change is written to that file automatically. If the browser is ever cleared, or you get a new phone, open Beursie, tap **Open my save file** and pick it. Everything comes back and Beursie keeps saving to it.
 
-After you reopen the app, Chrome may ask once whether Beursie can keep editing the file. Tap **Allow**.
+Chrome decides when Beursie may edit the file, and the app can't skip that. After you reopen the app, Chrome asks the first time you change something (just opening and looking never asks). If it offers **Allow on every visit**, pick that and it stops asking.
 
 This works in Chrome on Android and on computers. Safari on iPhone and Firefox can't do it, so use **Back up everything** there instead.
 

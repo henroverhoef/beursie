@@ -228,6 +228,9 @@ const canFile = 'showSaveFilePicker' in window && 'showOpenFilePicker' in window
 const FILE_TYPES = [{ description:'Beursie data', accept:{ 'application/json':['.json'] } }];
 let fileHandle = null, fileOK = false, fileTimer = null, fileChain = Promise.resolve(), fileAsking = null, fileAsked = false;
 const fileLinked = () => !!(fileHandle && fileOK);
+// Changes made while the browser hadn't allowed writing yet. Only then does Beursie ask, so just opening and looking never prompts.
+let fileDirty = false; try { fileDirty = localStorage.getItem('beursie.fileDirty') === '1'; } catch(e){}
+function setDirty(v){ fileDirty = v; try { v ? localStorage.setItem('beursie.fileDirty', '1') : localStorage.removeItem('beursie.fileDirty'); } catch(e){} }
 function idb(mode, fn){ // tiny key-value store, only to remember the file handle between visits
   return new Promise((res, rej) => {
     const o = indexedDB.open('beursie', 1);
@@ -236,12 +239,17 @@ function idb(mode, fn){ // tiny key-value store, only to remember the file handl
     o.onsuccess = () => { const tx = o.result.transaction('kv', mode), r = fn(tx.objectStore('kv')); tx.oncomplete = () => res(r && r.result); tx.onerror = () => rej(tx.error); };
   });
 }
-function queueFileSave(){ if (fileLinked()){ clearTimeout(fileTimer); fileTimer = setTimeout(writeFile, 800); } }
+function queueFileSave(){
+  if (fileLinked()){ clearTimeout(fileTimer); fileTimer = setTimeout(writeFile, 800); return; }
+  if (!fileHandle) return;
+  setDirty(true);
+  if (!fileAsked && navigator.userActivation && navigator.userActivation.isActive) askFile(); // saved from a tap: ask right now
+}
 function writeFile(){
   clearTimeout(fileTimer); fileTimer = null;
   const h = fileHandle, text = JSON.stringify(S, null, 1);
   if (!h || !fileOK) return Promise.resolve(false);
-  return fileChain = fileChain.then(async () => { const w = await h.createWritable(); await w.write(text); await w.close(); return true; })
+  return fileChain = fileChain.then(async () => { const w = await h.createWritable(); await w.write(text); await w.close(); if (h === fileHandle) setDirty(false); return true; })
     .catch(() => { if (h === fileHandle){ fileOK = false; toast('Couldn’t write to your save file. Go to Budget → Save file to reconnect it.', 'warn'); if (tab === 'budget' || tab === 'overview') render(); } return false; });
 }
 async function linkFile(h){
@@ -286,8 +294,8 @@ async function initFile(){
     if (tab === 'budget' || tab === 'overview') render();
   } catch(e){}
 }
-// The browser forgets the write permission between visits; ask again on the first tap.
-document.addEventListener('click', () => { if (fileHandle && !fileOK && !fileAsked) askFile(); }, true);
+// The browser may forget the write permission between visits. If something changed since, ask on the next tap.
+document.addEventListener('click', () => { if (fileHandle && !fileOK && !fileAsked && fileDirty) askFile(); }, true);
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && fileTimer) writeFile(); });
 
 /* ---------- dates & periods ---------- */
@@ -403,7 +411,7 @@ function alertsFor(p){
   if (S.goals.length && freeMoney() < -1) out.push({ lvl:'warn', action:'goals', text:`Your goals hold ${R(-freeMoney())} more than what's above the emergency floor. Take some out of a goal or top up the fund.` });
   const lastB = [S.lastExport, S.drive.last].filter(Boolean).sort().pop();
   const lastEx = lastB ? daysBetween(parseISO(lastB), now) : null;
-  if (fileHandle && !fileOK) out.push({ lvl:'warn', action:'savefile', text:`Beursie needs your OK to keep saving to ${fileHandle.name}.` });
+  if (fileHandle && !fileOK && fileDirty) out.push({ lvl:'warn', action:'savefile', text:`Your latest changes aren’t in ${fileHandle.name} yet. Beursie needs your OK to save them.` });
   else if (canFile && !fileHandle && S.setupDone) out.push({ lvl:'info', action:'savefile', text:'Your data lives only in this browser, so clearing it wipes everything. Pick a save file (e.g. in Google Drive) to keep it safe.' });
   else if (!fileHandle && S.tx.length > 20 && (lastEx === null || lastEx > 30)) out.push({ lvl:'info', text: lastEx===null ? 'You haven’t backed up yet. Your data lives only on this device.' : `Last backup was ${lastEx} days ago.`, action:'backup' });
   return out;
@@ -1157,8 +1165,8 @@ function renderBudget(){
     <div class="card stack" id="saveFile">
       <h2>Save file</h2>
       ${!canFile ? `<p class="muted" style="margin:0;font-size:.85rem">This browser can’t keep a save file up to date (Safari on iPhone and Firefox can’t). Use <b>Back up everything</b> below now and then and keep the file in Google Drive, or use Chrome on Android.</p>`
-      : fileHandle ? `<p class="muted" style="margin:0;font-size:.85rem">${fileOK ? `Every change is saved to <b>${esc(fileHandle.name)}</b>. If the browser is ever cleared, tap <b>Open my save file</b> on the welcome screen and pick it.` : `Linked to <b>${esc(fileHandle.name)}</b>, but the browser needs your OK before Beursie can write to it again.`}</p>
-      ${fileOK ? '' : '<button class="primary" id="fAllow">Keep saving to this file</button>'}
+      : fileHandle ? `<p class="muted" style="margin:0;font-size:.85rem">${fileOK ? `Every change is saved to <b>${esc(fileHandle.name)}</b>. If the browser is ever cleared, tap <b>Open my save file</b> on the welcome screen and pick it.` : fileDirty ? `Your latest changes aren’t in <b>${esc(fileHandle.name)}</b> yet. Chrome needs your OK before Beursie can write to it.` : `Linked to <b>${esc(fileHandle.name)}</b>. Chrome asks for your OK the first time you change something after opening the app. If it offers <b>Allow on every visit</b>, pick that and it won’t ask again.`}</p>
+      ${fileOK || !fileDirty ? '' : '<button class="primary" id="fAllow">Save my changes to the file</button>'}
       <div class="row" style="flex-wrap:wrap"><button class="ghost" id="fNew" style="flex:1">Save to a new file</button><button class="ghost" id="fOpen" style="flex:1">Open a save file</button></div>`
       : `<p class="muted" style="margin:0;font-size:.85rem">Beursie can keep one file up to date with all your data, in a folder you choose. Pick <b>Google Drive</b> or <b>Downloads</b> in the next screen. That file isn’t touched when you clear the browser.</p>
       <button class="primary" id="fNew">Choose where to save</button>
