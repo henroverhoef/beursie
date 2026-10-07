@@ -1107,7 +1107,7 @@ function renderBudget(){
     <details class="card" ${S.drive.clientId ? 'open' : ''}>
       <summary>Google Drive backup (advanced)</summary>
       <div class="stack" style="margin-top:12px">
-      ${!S.drive.clientId ? `<p class="muted" style="margin:0;font-size:.85rem">You don’t need this if you use a save file: saving that file in Google Drive does the same job. This connects to Drive directly instead and needs a one-time Google client ID; the README in your GitHub repo has the steps.</p>
+      ${!S.drive.clientId ? `<p class="muted" style="margin:0;font-size:.85rem">You don’t need this: <b>Back up now</b> above can save to Google Drive too. This connects to Drive directly instead and needs a one-time Google client ID; the README in your GitHub repo has the steps.</p>
       <div class="field"><label for="gCid">Google client ID</label><input id="gCid" type="text" placeholder="…apps.googleusercontent.com" autocomplete="off"></div>
       <button class="ghost" id="gSave">Save client ID</button>`
       : `<p class="muted" style="margin:0;font-size:.85rem">${S.drive.connected ? `Connected. Last Drive backup: ${S.drive.last ? short(parseISO(S.drive.last)) : 'not yet'}. Only the backup file Beursie creates is visible to it.` : 'Client ID saved. Connect once to allow Beursie to save its backup file in your Drive.'}</p>

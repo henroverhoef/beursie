@@ -2,7 +2,7 @@
 
 A pocket budget tracker that installs on your phone like an app. Logging a purchase takes three taps: amount, category, save.
 
-Your transactions are stored only on your device: in the browser's storage for this site, and in a save file you choose. Nothing is sent to a server, so this folder contains no personal data and can safely be public.
+Your transactions are stored only on your device: in the browser's storage for this site, and in the backups you make. Nothing is sent to a server, so this folder contains no personal data and can safely be public.
 
 ## Put it online (once, about 5 minutes)
 
