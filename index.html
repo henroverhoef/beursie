@@ -620,6 +620,39 @@ function render(){
   ({ add:renderAdd, overview:renderOverview, history:renderHistory, budget:renderBudget, review:renderReview })[tab]();
 }
 
+/* ---------- first-run tips: install the app, then notifications ---------- */
+let installEvt = null, notifyGranted = false;
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; if (document.getElementById('tInstall')) introSheet(); });
+window.addEventListener('appinstalled', () => { installEvt = null; if (document.getElementById('tInstall')) introSheet(); });
+const isInstalled = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const isIOS = () => /iPhone|iPad|iPod/i.test(navigator.userAgent);
+async function enableNotify(){
+  if (!('Notification' in window)){ toast(isIOS() && !isInstalled() ? 'On iPhone, add Beursie to your Home Screen first, then turn notifications on from there.' : 'This browser does not support notifications. Install Beursie to your home screen first.', 'warn'); return false; }
+  const p = await Notification.requestPermission();
+  if (p !== 'granted'){ toast('Notifications are blocked. Allow them in your browser settings for this site.', 'warn'); return false; }
+  notifyGranted = true; S.notify = true; save(); return true;
+}
+function introSheet(){
+  const installed = isInstalled(), notifOn = S.notify && 'Notification' in window && (notifyGranted || Notification.permission === 'granted');
+  const step = (n, done, title, body) => `<div class="row" style="align-items:flex-start;gap:12px"><span class="pill ${done ? 'good' : ''}" style="flex:none;min-width:26px;text-align:center">${done ? '✓' : n}</span><div class="stack" style="gap:8px;flex:1;min-width:0"><b>${title}</b>${body}</div></div>`;
+  sheet(`<div class="stack">
+    <h2>Two quick things to get started</h2>
+    ${step(1, installed, 'Install Beursie as an app', installed ? '<span class="muted" style="font-size:.88rem">Done. You’re using the app.</span>'
+      : installEvt ? '<span class="muted" style="font-size:.88rem">It opens from your home screen like any other app and works offline.</span><button class="primary" id="tInstall">Install app</button>'
+      : isIOS() ? '<span class="muted" style="font-size:.88rem" id="tInstall">In Safari, tap the <b>Share</b> button (the square with an arrow), then <b>Add to Home Screen</b>. Open Beursie from your home screen from then on.</span>'
+      : '<span class="muted" style="font-size:.88rem" id="tInstall">In Chrome, tap the <b>⋮</b> menu, then <b>Add to Home screen</b> or <b>Install app</b>. Open Beursie from your home screen from then on.</span>')}
+    ${step(2, notifOn, 'Turn on notifications', notifOn ? '<span class="muted" style="font-size:.88rem">Done. Beursie will tell you when a category gets close to its limit.</span>'
+      : '<span class="muted" style="font-size:.88rem">Beursie warns you when a category gets close to its budget.' + (isIOS() && !installed ? ' On iPhone this only works once Beursie is on your Home Screen.' : '') + '</span><button class="ghost" id="tNotify">Turn on notifications</button>')}
+    <button class="primary" id="tDone">${installed && notifOn ? 'Let’s go' : 'Got it'}</button>
+    <p class="muted" style="margin:0;font-size:.8rem;text-align:center">You can turn notifications on later under Budget → Settings.</p>
+  </div>`, sh => {
+    const ib = sh.querySelector('button#tInstall'); if (ib) ib.onclick = async () => { const e = installEvt; installEvt = null; e.prompt(); try { await e.userChoice; } catch(x){} introSheet(); };
+    const nb = sh.querySelector('#tNotify'); if (nb) nb.onclick = async () => { if (await enableNotify()) introSheet(); };
+    sh.querySelector('#tDone').onclick = () => { closeSheet(); render(); };
+  });
+  if (!S.introSeen){ S.introSeen = true; save(); }
+}
+
 /* ---------- welcome ---------- */
 function renderWelcome(){
   app.innerHTML = `
@@ -1192,11 +1225,7 @@ function renderBudget(){
   app.querySelector('#sCover').onchange = e => { S.monthsCover = Math.max(0, parseFloat(e.target.value)||0); save(); };
   app.querySelector('#sAuto').onchange = e => { S.autoRecurring = e.target.checked; save(); if (S.autoRecurring){ const n = postRecurring(); if (n) toast(`Added ${n} monthly payment${n>1?'s':''} for this period.`); } };
   app.querySelector('#sNotify').onchange = async e => {
-    if (e.target.checked){
-      if (!('Notification' in window)){ e.target.checked = false; toast('This browser does not support notifications. Install Beursie to your home screen first.', 'warn'); return; }
-      const p = await Notification.requestPermission();
-      if (p !== 'granted'){ e.target.checked = false; toast('Notifications are blocked. Allow them in your browser settings for this site.', 'warn'); return; }
-    }
+    if (e.target.checked && !(await enableNotify())){ e.target.checked = false; return; }
     S.notify = e.target.checked; save();
   };
   app.querySelector('#dImport').onclick = () => pickFile('csv');
@@ -1439,6 +1468,7 @@ const posted = S.setupDone ? postRecurring() : 0;
     try { history.replaceState({ tab, filter:histFilter, pkey:null }, '', location.pathname); } catch(e){}
   } })();
 render();
+if (!S.introSeen) introSheet();
 initDrive();
 initFile();
 if (posted) toast(`Added ${posted} monthly payment${posted>1?'s':''} for this period.`);

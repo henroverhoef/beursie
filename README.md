@@ -20,7 +20,7 @@ Vercel or Netlify work the same way: import the repo, or drag the folder in. No 
 - **Android (Chrome):** open the link, then tap ⋮ → **Add to Home screen / Install app**.
 - **iPhone (Safari):** tap Share → **Add to Home Screen**.
 
-On first open, tap **Load starter file** and pick `budget-starter.json`. Then go to **Budget → Import bank statement** and choose your ABSA CSV to bring in your history.
+On first open, a short tip walks you through installing Beursie as an app and turning on notifications. Then tap **Load starter file** and pick `budget-starter.json`. Then go to **Budget → Import bank statement** and choose your ABSA CSV to bring in your history.
 
 ## Everyday use
 
