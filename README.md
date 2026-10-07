@@ -45,9 +45,12 @@ On first open, a short tip walks you through installing Beursie as an app and tu
 
 The app's own copy of your data lives in the browser, so clearing Chrome's **Cookies and site data** erases it. (Clearing only **Cached images and files** is safe.)
 
-The Overview shows how many changes aren't backed up yet, e.g. *"28 changes not backed up yet"*. Tap it (or **Budget → Backup → Back up now**), choose **Drive** in the share menu and tap **Save**. Each backup is a new dated file like `beursie-backup-2026-10-07.json`, so you also keep a history; delete old ones whenever you like. On a computer the file goes to Downloads.
+The Overview shows how many changes aren't backed up yet, e.g. *"28 changes not backed up yet"*. Tap it, or go to **Budget → Backup → Back up now**.
 
-If the browser is ever cleared, or you get a new phone, open Beursie, tap **Restore my backup** and pick the newest file.
+- **Chrome (Android or computer):** the first time, choose where to keep your backup file. Pick **Google Drive** or **Downloads**; it's called `Beursie backup.json`. After that, every backup overwrites that same file. Chrome may ask you to tap **Allow** the first time you back up after opening the app. It only asks when you back up, never while you're just looking around. **Use a different file** changes where it goes.
+- **Safari on iPhone and Firefox:** these can't overwrite a file, so each backup is a new dated file. Choose **Drive** in the share menu, and delete old ones whenever you like.
+
+If the browser is ever cleared, or you get a new phone, open Beursie, tap **Restore my backup** and pick your backup file. In Chrome, later backups then overwrite that file again.
 
 ## Google Drive backup (advanced, optional)
 

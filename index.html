@@ -598,12 +598,12 @@ function renderWelcome(){
     </div>
     <div class="card stack">
       <h2>Used Beursie before?</h2>
-      <p class="muted" style="margin:0">Pick your newest backup file (e.g. “beursie-backup-2026-10-07.json” in Google Drive or Downloads) to get everything back.</p>
+      <p class="muted" style="margin:0">Pick your backup file (e.g. “Beursie backup.json” in Google Drive or Downloads) to get everything back.</p>
       <button class="primary" id="wOpen">Restore my backup</button>
     </div>
     <p class="muted" style="font-size:.85rem">Everything you enter stays on this device and in the backups you make. Nothing is sent to a server.</p>
   </div>`;
-  app.querySelector('#wOpen').onclick = () => pickFile('json');
+  app.querySelector('#wOpen').onclick = restoreBackup;
   app.querySelector('#wStarter').onclick = () => pickFile('json');
   app.querySelector('#wBlank').onclick = () => { S.setupDone = true; save(); tab = 'budget'; render(); toast('Set your salary and amounts here.'); };
 }
@@ -1088,9 +1088,12 @@ function renderBudget(){
     </div>
     <div class="card stack" id="backupCard">
       <h2>Backup</h2>
-      <p class="muted" style="margin:0;font-size:.85rem">${unsaved ? `<b>${unsaved} change${unsaved>1?'s':''}</b> since your last backup.` : S.lastExport ? 'Everything is backed up.' : ''} Last backup: ${S.lastExport ? short(parseISO(S.lastExport)) : 'never'}. Each backup is a new dated file: choose <b>Drive</b> in the share menu to keep it in Google Drive. If the browser is ever cleared, tap <b>Restore my backup</b> and pick the newest one.</p>
-      <button class="${unsaved ? 'primary' : 'ghost'}" id="bkNow">Back up now</button>
-      <button class="ghost" id="bkRestore">Restore a backup</button>
+      <p class="muted" style="margin:0;font-size:.85rem">${unsaved ? `<b>${unsaved} change${unsaved>1?'s':''}</b> since your last backup.` : S.lastExport ? 'Everything is backed up.' : ''} Last backup: ${S.lastExport ? short(parseISO(S.lastExport)) : 'never'}. ${!canFile
+        ? 'Each backup is a new dated file: choose <b>Drive</b> in the share menu to keep it in Google Drive. If the browser is ever cleared, tap <b>Restore my backup</b> and pick the newest one.'
+        : backupFile ? `Each backup overwrites <b>${esc(backupFile.name)}</b>. Chrome may ask you to tap <b>Allow</b> the first time each visit. If the browser is ever cleared, tap <b>Restore my backup</b> and pick that file.`
+        : 'The first time, choose where to keep your backup file: pick <b>Google Drive</b> or <b>Downloads</b>. After that, every backup overwrites that one file.'}</p>
+      <button class="${unsaved || !S.lastExport ? 'primary' : 'ghost'}" id="bkNow">Back up now</button>
+      <div class="row" style="flex-wrap:wrap"><button class="ghost" id="bkRestore" style="flex:1">Restore a backup</button>${canFile && backupFile ? '<button class="ghost" id="bkPick" style="flex:1">Use a different file</button>' : ''}</div>
       <p class="muted" style="margin:0;font-size:.78rem">Clearing Chrome: <b>Cached images and files</b> is safe. <b>Cookies and site data</b> is what erases Beursie’s copy in the browser.</p>
     </div>
     <div class="card stack">
@@ -1154,8 +1157,9 @@ function renderBudget(){
     S.notify = e.target.checked; save();
   };
   app.querySelector('#dImport').onclick = () => pickFile('csv');
-  app.querySelector('#bkNow').onclick = doBackup;
-  app.querySelector('#bkRestore').onclick = () => pickFile('json');
+  app.querySelector('#bkNow').onclick = () => doBackup();
+  app.querySelector('#bkRestore').onclick = restoreBackup;
+  const bp = app.querySelector('#bkPick'); if (bp) bp.onclick = () => doBackup(true);
   app.querySelector('#dReview').onclick = () => openReview();
   app.querySelectorAll('.edrow[data-fv]').forEach(row => row.addEventListener('change', e => {
     const f = S.favs[+row.dataset.fv], k = e.target.dataset.f; if (!k) return;
@@ -1170,11 +1174,58 @@ function renderBudget(){
   const gf = app.querySelector('#gForget'); if (gf) gf.onclick = () => { try { if (driveToken && window.google) google.accounts.oauth2.revoke(driveToken.v, () => {}); } catch(e){} driveToken = null; tokenClient = null; tokenWait = null; S.drive = blankState().drive; save(); renderBudget(); toast('Disconnected. Paste your new client ID to connect again.'); };
   app.querySelector('#dCSV').onclick = async () => { if (await deliver(`beursie-transactions-${iso(today())}.csv`, exportCSV(), 'text/csv')) toast('Exported. Share the CSV with Claude to review your month.'); };
   app.querySelector('#dRestore').onclick = () => pickFile('json');
-  app.querySelector('#dReset').onclick = () => confirmSheet('Erase everything on this device? Back up first if you want to keep it.', 'Erase all data', () => { S = blankState(); save(); setUnsaved(0); render(); toast('All data erased.'); });
+  app.querySelector('#dReset').onclick = () => confirmSheet('Erase everything on this device? Back up first if you want to keep it.', 'Erase all data', async () => { await rememberFile(null); S = blankState(); save(); setUnsaved(0); render(); toast('All data erased. Your backup file was left as it was.'); });
 }
-async function doBackup(){
-  const ok = await deliver(`beursie-backup-${iso(today())}.json`, JSON.stringify(S, null, 1), 'application/json');
-  if (ok){ S.lastExport = iso(today()); save(); setUnsaved(0); render(); toast('Backup saved. Keep it somewhere safe, like Google Drive.'); }
+/* ---------- backup file ----------
+   In Chrome, Beursie remembers the backup file you pick and overwrites it on each
+   backup (Chrome may ask you to Allow once per visit). Elsewhere every backup is a
+   new dated file, shared or downloaded. */
+const canFile = 'showSaveFilePicker' in window && 'showOpenFilePicker' in window;
+const FILE_TYPES = [{ description:'Beursie backup', accept:{ 'application/json':['.json'] } }];
+let backupFile = null;
+function idb(mode, fn){ // tiny key-value store, only to remember the backup file between visits
+  return new Promise((res, rej) => {
+    const o = indexedDB.open('beursie', 1);
+    o.onupgradeneeded = () => o.result.createObjectStore('kv');
+    o.onerror = () => rej(o.error);
+    o.onsuccess = () => { const tx = o.result.transaction('kv', mode), r = fn(tx.objectStore('kv')); tx.oncomplete = () => res(r && r.result); tx.onerror = () => rej(tx.error); };
+  });
+}
+async function rememberFile(h){
+  backupFile = h;
+  try { await idb('readwrite', st => h ? st.put(h, 'backup') : st.delete('backup')); } catch(e){}
+}
+async function initBackupFile(){
+  if (!canFile) return;
+  try { backupFile = (await idb('readonly', st => st.get('backup'))) || null; } catch(e){}
+  if (backupFile && tab === 'budget') render();
+}
+async function doBackup(pickNew){
+  if (!canFile){
+    const ok = await deliver(`beursie-backup-${iso(today())}.json`, JSON.stringify(S, null, 1), 'application/json');
+    if (ok){ S.lastExport = iso(today()); save(); setUnsaved(0); render(); toast('Backup saved. Keep it somewhere safe, like Google Drive.'); }
+    return;
+  }
+  let h = pickNew === true ? null : backupFile;
+  if (!h){
+    try { h = await showSaveFilePicker({ suggestedName:'Beursie backup.json', types:FILE_TYPES }); }
+    catch(e){ if (e.name !== 'AbortError') toast('Couldn’t save there. Try another folder.', 'bad'); return; }
+  }
+  let allowed = false;
+  try { allowed = (await h.queryPermission({ mode:'readwrite' })) === 'granted' || (await h.requestPermission({ mode:'readwrite' })) === 'granted'; } catch(e){}
+  if (!allowed) return toast('Not backed up. Tap Back up now again and choose Allow, so Beursie can update your backup file.', 'warn');
+  try { const w = await h.createWritable(); await w.write(JSON.stringify(S, null, 1)); await w.close(); }
+  catch(e){ return toast('Couldn’t write the backup file. It may have been moved or deleted.', 'bad', { label:'Pick a file', fn:() => doBackup(true) }); }
+  await rememberFile(h);
+  S.lastExport = iso(today()); save(); setUnsaved(0); render(); toast(`Backed up to “${h.name}”.`);
+}
+async function restoreBackup(){
+  if (!canFile) return pickFile('json');
+  let h;
+  try { [h] = await showOpenFilePicker({ types:FILE_TYPES }); }
+  catch(e){ if (e.name !== 'AbortError') toast('Couldn’t open that file.', 'bad'); return; }
+  let text; try { text = await (await h.getFile()).text(); } catch(e){ return toast('Couldn’t read that file.', 'bad'); }
+  loadJSON(text, () => rememberFile(h)); // later backups overwrite the file you restored from
 }
 
 /* ---------- month review ---------- */
@@ -1393,6 +1444,7 @@ const posted = S.setupDone ? postRecurring() : 0;
 render();
 if (!S.introSeen) introSheet();
 initDrive();
+initBackupFile();
 if (posted) toast(`Added ${posted} monthly payment${posted>1?'s':''} for this period.`);
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(()=>{});
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && S.setupDone){ const n = postRecurring(); if (n){ render(); toast(`Added ${n} monthly payment${n>1?'s':''}.`); } } });
