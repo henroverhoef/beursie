@@ -208,87 +208,24 @@ function blankState(){
 /* ---------- storage ---------- */
 let S;
 let memoryOnly = false;
+// How many saves changed something since the last backup file. Kept apart from S so it never ends up in a backup.
+let lastSaved = null, unsaved = 0;
+try { unsaved = +localStorage.getItem('beursie.unsaved') || 0; localStorage.removeItem('beursie.fileDirty'); } catch(e){}
+function setUnsaved(n){ unsaved = n; try { localStorage.setItem('beursie.unsaved', String(n)); } catch(e){} }
 function load(){
-  try { const raw = localStorage.getItem(KEY); S = raw ? JSON.parse(raw) : blankState(); }
+  try { const raw = localStorage.getItem(KEY); lastSaved = raw; S = raw ? JSON.parse(raw) : blankState(); }
   catch(e){ S = blankState(); memoryOnly = true; }
   S = Object.assign(blankState(), S);
 }
 function save(){
-  try { localStorage.setItem(KEY, JSON.stringify(S)); }
+  const str = JSON.stringify(S);
+  if (lastSaved !== null && str !== lastSaved && S.setupDone) setUnsaved(unsaved + 1);
+  lastSaved = str;
+  try { localStorage.setItem(KEY, str); }
   catch(e){ memoryOnly = true; toast('Could not save on this device. Export a backup now.','bad'); }
-  queueFileSave();
 }
 try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch(e){}
 
-/* ---------- save file ----------
-   A .json file the user picks once (Downloads, Google Drive…) that Beursie
-   rewrites after every change. It lives outside the browser, so clearing
-   site data can't wipe it; reopening it brings everything back. */
-const canFile = 'showSaveFilePicker' in window && 'showOpenFilePicker' in window;
-const FILE_TYPES = [{ description:'Beursie data', accept:{ 'application/json':['.json'] } }];
-let fileHandle = null, fileOK = false, fileTimer = null, fileChain = Promise.resolve(), fileAsking = null, fileAsked = false;
-const fileLinked = () => !!(fileHandle && fileOK);
-function idb(mode, fn){ // tiny key-value store, only to remember the file handle between visits
-  return new Promise((res, rej) => {
-    const o = indexedDB.open('beursie', 1);
-    o.onupgradeneeded = () => o.result.createObjectStore('kv');
-    o.onerror = () => rej(o.error);
-    o.onsuccess = () => { const tx = o.result.transaction('kv', mode), r = fn(tx.objectStore('kv')); tx.oncomplete = () => res(r && r.result); tx.onerror = () => rej(tx.error); };
-  });
-}
-function queueFileSave(){ if (fileLinked()){ clearTimeout(fileTimer); fileTimer = setTimeout(writeFile, 800); } }
-function writeFile(){
-  clearTimeout(fileTimer); fileTimer = null;
-  const h = fileHandle, text = JSON.stringify(S, null, 1);
-  if (!h || !fileOK) return Promise.resolve(false);
-  return fileChain = fileChain.then(async () => { const w = await h.createWritable(); await w.write(text); await w.close(); return true; })
-    .catch(() => { if (h === fileHandle){ fileOK = false; toast('Couldn’t write to your save file. Go to Budget → Save file to reconnect it.', 'warn'); if (tab === 'budget' || tab === 'overview') render(); } return false; });
-}
-async function linkFile(h){
-  fileHandle = h; fileOK = true; fileAsked = false;
-  try { await idb('readwrite', st => st.put(h, 'file')); } catch(e){}
-}
-async function unlinkFile(){
-  clearTimeout(fileTimer); fileHandle = null; fileOK = false;
-  try { await idb('readwrite', st => st.delete('file')); } catch(e){}
-}
-function askFile(){ // needs a tap: asks the browser to let Beursie keep writing to the linked file
-  if (!fileHandle || fileOK) return Promise.resolve(fileOK);
-  if (!fileAsking) fileAsking = (async () => {
-    let ok = false; try { ok = (await fileHandle.requestPermission({ mode:'readwrite' })) === 'granted'; fileAsked = true; } catch(e){} // throws without a fresh tap: try again on the next one
-    fileAsking = null;
-    if (ok){ await linkFile(fileHandle); await writeFile(); }
-    if (tab === 'budget' || tab === 'overview') render();
-    return ok;
-  })();
-  return fileAsking;
-}
-async function chooseSaveFile(){
-  let h;
-  try { h = await showSaveFilePicker({ suggestedName:'Beursie data.json', types:FILE_TYPES }); }
-  catch(e){ if (e.name !== 'AbortError') toast('Couldn’t make a file there. Try another folder.', 'bad'); return; }
-  await linkFile(h);
-  if (await writeFile()){ render(); toast(`Saving to “${h.name}”. Every change goes there automatically.`); }
-}
-async function openSaveFile(){
-  let h;
-  try { [h] = await showOpenFilePicker({ types:FILE_TYPES }); }
-  catch(e){ if (e.name !== 'AbortError') toast('Couldn’t open that file.', 'bad'); return; }
-  let text; try { text = await (await h.getFile()).text(); } catch(e){ return toast('Couldn’t read that file.', 'bad'); }
-  loadJSON(text, () => { fileHandle = h; fileOK = false; askFile().then(ok => { if (!ok) toast('Restored. Allow Beursie to save to this file when asked, so new entries go there too.', 'warn'); }); });
-}
-async function initFile(){
-  if (!canFile) return;
-  try {
-    const h = await idb('readonly', st => st.get('file')); if (!h) return;
-    fileHandle = h; fileOK = (await h.queryPermission({ mode:'readwrite' })) === 'granted';
-    if (fileOK) writeFile();
-    if (tab === 'budget' || tab === 'overview') render();
-  } catch(e){}
-}
-// The browser forgets the write permission between visits; ask again on the first tap.
-document.addEventListener('click', () => { if (fileHandle && !fileOK && !fileAsked) askFile(); }, true);
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && fileTimer) writeFile(); });
 
 /* ---------- dates & periods ---------- */
 const iso = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -401,11 +338,6 @@ function alertsFor(p){
   const rev = S.tx.filter(t => t.kind==='expense' && !t.catId).length;
   if (rev) out.push({ lvl:'info', text:`${rev} imported transaction${rev>1?'s':''} need a category.`, action:'review' });
   if (S.goals.length && freeMoney() < -1) out.push({ lvl:'warn', action:'goals', text:`Your goals hold ${R(-freeMoney())} more than what's above the emergency floor. Take some out of a goal or top up the fund.` });
-  const lastB = [S.lastExport, S.drive.last].filter(Boolean).sort().pop();
-  const lastEx = lastB ? daysBetween(parseISO(lastB), now) : null;
-  if (fileHandle && !fileOK) out.push({ lvl:'warn', action:'savefile', text:`Beursie needs your OK to keep saving to ${fileHandle.name}.` });
-  else if (canFile && !fileHandle && S.setupDone) out.push({ lvl:'info', action:'savefile', text:'Your data lives only in this browser, so clearing it wipes everything. Pick a save file (e.g. in Google Drive) to keep it safe.' });
-  else if (!fileHandle && S.tx.length > 20 && (lastEx === null || lastEx > 30)) out.push({ lvl:'info', text: lastEx===null ? 'You haven’t backed up yet. Your data lives only on this device.' : `Last backup was ${lastEx} days ago.`, action:'backup' });
   return out;
 }
 function notify(text){
@@ -620,6 +552,39 @@ function render(){
   ({ add:renderAdd, overview:renderOverview, history:renderHistory, budget:renderBudget, review:renderReview })[tab]();
 }
 
+/* ---------- first-run tips: install the app, then notifications ---------- */
+let installEvt = null, notifyGranted = false;
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; if (document.getElementById('tInstall')) introSheet(); });
+window.addEventListener('appinstalled', () => { installEvt = null; if (document.getElementById('tInstall')) introSheet(); });
+const isInstalled = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const isIOS = () => /iPhone|iPad|iPod/i.test(navigator.userAgent);
+async function enableNotify(){
+  if (!('Notification' in window)){ toast(isIOS() && !isInstalled() ? 'On iPhone, add Beursie to your Home Screen first, then turn notifications on from there.' : 'This browser does not support notifications. Install Beursie to your home screen first.', 'warn'); return false; }
+  const p = await Notification.requestPermission();
+  if (p !== 'granted'){ toast('Notifications are blocked. Allow them in your browser settings for this site.', 'warn'); return false; }
+  notifyGranted = true; S.notify = true; save(); return true;
+}
+function introSheet(){
+  const installed = isInstalled(), notifOn = S.notify && 'Notification' in window && (notifyGranted || Notification.permission === 'granted');
+  const step = (n, done, title, body) => `<div class="row" style="align-items:flex-start;gap:12px"><span class="pill ${done ? 'good' : ''}" style="flex:none;min-width:26px;text-align:center">${done ? '✓' : n}</span><div class="stack" style="gap:8px;flex:1;min-width:0"><b>${title}</b>${body}</div></div>`;
+  sheet(`<div class="stack">
+    <h2>Two quick things to get started</h2>
+    ${step(1, installed, 'Install Beursie as an app', installed ? '<span class="muted" style="font-size:.88rem">Done. You’re using the app.</span>'
+      : installEvt ? '<span class="muted" style="font-size:.88rem">It opens from your home screen like any other app and works offline.</span><button class="primary" id="tInstall">Install app</button>'
+      : isIOS() ? '<span class="muted" style="font-size:.88rem" id="tInstall">In Safari, tap the <b>Share</b> button (the square with an arrow), then <b>Add to Home Screen</b>. Open Beursie from your home screen from then on.</span>'
+      : '<span class="muted" style="font-size:.88rem" id="tInstall">In Chrome, tap the <b>⋮</b> menu, then <b>Add to Home screen</b> or <b>Install app</b>. Open Beursie from your home screen from then on.</span>')}
+    ${step(2, notifOn, 'Turn on notifications', notifOn ? '<span class="muted" style="font-size:.88rem">Done. Beursie will tell you when a category gets close to its limit.</span>'
+      : '<span class="muted" style="font-size:.88rem">Beursie warns you when a category gets close to its budget.' + (isIOS() && !installed ? ' On iPhone this only works once Beursie is on your Home Screen.' : '') + '</span><button class="ghost" id="tNotify">Turn on notifications</button>')}
+    <button class="primary" id="tDone">${installed && notifOn ? 'Let’s go' : 'Got it'}</button>
+    <p class="muted" style="margin:0;font-size:.8rem;text-align:center">You can turn notifications on later under Budget → Settings.</p>
+  </div>`, sh => {
+    const ib = sh.querySelector('button#tInstall'); if (ib) ib.onclick = async () => { const e = installEvt; installEvt = null; e.prompt(); try { await e.userChoice; } catch(x){} introSheet(); };
+    const nb = sh.querySelector('#tNotify'); if (nb) nb.onclick = async () => { if (await enableNotify()) introSheet(); };
+    sh.querySelector('#tDone').onclick = () => { closeSheet(); render(); };
+  });
+  if (!S.introSeen){ S.introSeen = true; save(); }
+}
+
 /* ---------- welcome ---------- */
 function renderWelcome(){
   app.innerHTML = `
@@ -633,12 +598,12 @@ function renderWelcome(){
     </div>
     <div class="card stack">
       <h2>Used Beursie before?</h2>
-      <p class="muted" style="margin:0">${canFile ? 'Open your save file (e.g. “Beursie data.json” in Google Drive or Downloads) to get everything back. Beursie keeps saving to it from then on.' : 'Load your latest backup file to get everything back.'}</p>
-      <button class="primary" id="wOpen">${canFile ? 'Open my save file' : 'Restore a backup'}</button>
+      <p class="muted" style="margin:0">Pick your backup file (e.g. “Beursie backup.json” in Google Drive or Downloads) to get everything back.</p>
+      <button class="primary" id="wOpen">Restore my backup</button>
     </div>
-    <p class="muted" style="font-size:.85rem">Everything you enter stays on this device and in the save file you choose. Nothing is sent to a server.</p>
+    <p class="muted" style="font-size:.85rem">Everything you enter stays on this device and in the backups you make. Nothing is sent to a server.</p>
   </div>`;
-  app.querySelector('#wOpen').onclick = () => canFile ? openSaveFile() : pickFile('json');
+  app.querySelector('#wOpen').onclick = restoreBackup;
   app.querySelector('#wStarter').onclick = () => pickFile('json');
   app.querySelector('#wBlank').onclick = () => { S.setupDone = true; save(); tab = 'budget'; render(); toast('Set your salary and amounts here.'); };
 }
@@ -858,7 +823,7 @@ function renderOverview(){
     ${dailyCard()}
     ${alerts.length ? `<div class="alerts">${alerts.map(a => {
       const go = a.cat ? `data-cat="${a.cat}"` : a.action ? `data-act="${a.action}"` : '';
-      const cta = a.action==='review' ? 'Review' : a.action==='backup' ? 'Back up now' : a.action==='savefile' ? (fileHandle ? 'Allow' : 'Set up') : a.cat || a.action ? 'See transactions' : '';
+      const cta = a.action==='review' ? 'Review' : a.cat || a.action ? 'See transactions' : '';
       return `<button class="alert ${a.lvl}" ${go}><span class="dot"></span><span style="flex:1">${esc(a.text)} ${cta?`<b style="color:var(--accent);white-space:nowrap">${cta} ›</b>`:''}</span></button>`;
     }).join('')}</div>` : ''}
     <button class="card tapcard row between" data-act="income" style="width:100%;text-align:left;color:inherit"><span><span class="eyebrow">Money in this period</span><br><b class="num" style="font-size:1.1rem">${R(incomeIn(p))}</b> <span class="muted" style="font-size:.85rem">of ${R(+S.salary||0)} salary expected</span></span><span class="chev">›</span></button>
@@ -886,6 +851,7 @@ function renderOverview(){
     </div>
     <div class="card stack chart"><h2>This month: planned vs actual</h2>${burnChart()}<p class="muted" style="margin:0;font-size:.8rem">Running total of flexible spending. Dashed: spending evenly to budget. Dotted: where you'll end up at your current pace.</p></div>
     <div class="card stack chart"><h2>Flexible spending by period</h2>${trendChart()}<p class="muted" style="margin:0;font-size:.8rem">Bars are what you spent on flexible categories; the line is your flexible budget.</p></div>
+    ${unsaved || (!S.lastExport && S.tx.length) ? `<button class="card tapcard row between" data-act="backup" style="width:100%;text-align:left;color:inherit"><span>${unsaved ? `<b class="num">${unsaved}</b> change${unsaved>1?'s':''} not backed up yet` : 'Not backed up yet'}</span><b style="color:var(--accent);white-space:nowrap">Back up now ›</b></button>` : ''}
     <div class="row" style="flex-wrap:wrap"><button class="ghost" data-act="reviewmonth" style="flex:1">Month review</button><button class="ghost" data-act="claude" style="flex:1">Copy summary for Claude</button></div>
   </div>`;
   app.onclick = e => {
@@ -897,7 +863,6 @@ function renderOverview(){
     if (a.dataset.act === 'income') go('history', { filter:'@in' });
     if (a.dataset.act === 'today') go('history', { filter:'@today' });
     if (a.dataset.act === 'backup') doBackup();
-    if (a.dataset.act === 'savefile') fileHandle ? askFile() : chooseSaveFile();
     if (a.dataset.act === 'setfund') setFundSheet();
     if (a.dataset.act === 'goals') goalsSheet();
     if (a.dataset.act === 'reviewmonth') openReview(reviewDue() || undefined);
@@ -1121,35 +1086,31 @@ function renderBudget(){
       <label class="toggle"><input type="checkbox" id="sAuto" ${S.autoRecurring?'checked':''}> Add monthly payments automatically</label>
       <label class="toggle"><input type="checkbox" id="sNotify" ${S.notify?'checked':''}> Phone notifications for budget warnings</label>
     </div>
-    <div class="card stack" id="saveFile">
-      <h2>Save file</h2>
-      ${!canFile ? `<p class="muted" style="margin:0;font-size:.85rem">This browser can’t keep a save file up to date (Safari on iPhone and Firefox can’t). Use <b>Back up everything</b> below now and then and keep the file in Google Drive, or use Chrome on Android.</p>`
-      : fileHandle ? `<p class="muted" style="margin:0;font-size:.85rem">${fileOK ? `Every change is saved to <b>${esc(fileHandle.name)}</b>. If the browser is ever cleared, tap <b>Open my save file</b> on the welcome screen and pick it.` : `Linked to <b>${esc(fileHandle.name)}</b>, but the browser needs your OK before Beursie can write to it again.`}</p>
-      ${fileOK ? '' : '<button class="primary" id="fAllow">Keep saving to this file</button>'}
-      <div class="row" style="flex-wrap:wrap"><button class="ghost" id="fNew" style="flex:1">Save to a new file</button><button class="ghost" id="fOpen" style="flex:1">Open a save file</button></div>`
-      : `<p class="muted" style="margin:0;font-size:.85rem">Beursie can keep one file up to date with all your data, in a folder you choose. Pick <b>Google Drive</b> or <b>Downloads</b> in the next screen. That file isn’t touched when you clear the browser.</p>
-      <button class="primary" id="fNew">Choose where to save</button>
-      <button class="ghost" id="fOpen">Open an existing save file</button>`}
+    <div class="card stack" id="backupCard">
+      <h2>Backup</h2>
+      <p class="muted" style="margin:0;font-size:.85rem">${unsaved ? `<b>${unsaved} change${unsaved>1?'s':''}</b> since your last backup.` : S.lastExport ? 'Everything is backed up.' : ''} Last backup: ${S.lastExport ? short(parseISO(S.lastExport)) : 'never'}. ${!canFile
+        ? 'Each backup is a new dated file: choose <b>Drive</b> in the share menu to keep it in Google Drive. If the browser is ever cleared, tap <b>Restore my backup</b> and pick the newest one.'
+        : backupFile ? `Each backup overwrites <b>${esc(backupFile.name)}</b>. Chrome may ask you to tap <b>Allow</b> the first time each visit. If the browser is ever cleared, tap <b>Restore my backup</b> and pick that file.`
+        : 'The first time, choose where to keep your backup file: pick <b>Google Drive</b> or <b>Downloads</b>. After that, every backup overwrites that one file.'}</p>
+      <button class="${unsaved || !S.lastExport ? 'primary' : 'ghost'}" id="bkNow">Back up now</button>
+      <div class="row" style="flex-wrap:wrap"><button class="ghost" id="bkRestore" style="flex:1">Restore a backup</button>${canFile && backupFile ? '<button class="ghost" id="bkPick" style="flex:1">Use a different file</button>' : ''}</div>
       <p class="muted" style="margin:0;font-size:.78rem">Clearing Chrome: <b>Cached images and files</b> is safe. <b>Cookies and site data</b> is what erases Beursie’s copy in the browser.</p>
     </div>
     <div class="card stack">
       <h2>Your data</h2>
-      <p class="muted" style="margin:0;font-size:.85rem">Stored in this browser${memoryOnly?' (storage is blocked here, so nothing will be kept — export before closing)':''}. ${S.tx.length} transactions. Last backup: ${S.lastExport ? short(parseISO(S.lastExport)) : 'never'}.</p>
+      <p class="muted" style="margin:0;font-size:.85rem">Stored in this browser${memoryOnly?' (storage is blocked here, so nothing will be kept — export before closing)':''}. ${S.tx.length} transactions.</p>
       <button class="primary" id="dImport">Import bank statement (CSV)</button>
       <button class="ghost" id="dReview">Month review &amp; bank check</button>
       <div class="row" style="flex-wrap:wrap">
         <button class="ghost" id="dCSV" style="flex:1">Export CSV for Claude</button>
-        <button class="ghost" id="dBackup" style="flex:1">Back up everything</button>
+        <button class="ghost" id="dRestore" style="flex:1">Load starter file</button>
       </div>
-      <div class="row" style="flex-wrap:wrap">
-        <button class="ghost" id="dRestore" style="flex:1">Restore backup / starter</button>
-        <button class="ghost danger" id="dReset" style="flex:1">Erase all data</button>
-      </div>
+      <button class="ghost danger" id="dReset">Erase all data</button>
     </div>
     <details class="card" ${S.drive.clientId ? 'open' : ''}>
       <summary>Google Drive backup (advanced)</summary>
       <div class="stack" style="margin-top:12px">
-      ${!S.drive.clientId ? `<p class="muted" style="margin:0;font-size:.85rem">You don’t need this if you use a save file: saving that file in Google Drive does the same job. This connects to Drive directly instead and needs a one-time Google client ID; the README in your GitHub repo has the steps.</p>
+      ${!S.drive.clientId ? `<p class="muted" style="margin:0;font-size:.85rem">You don’t need this: <b>Back up now</b> above can save to Google Drive too. This connects to Drive directly instead and needs a one-time Google client ID; the README in your GitHub repo has the steps.</p>
       <div class="field"><label for="gCid">Google client ID</label><input id="gCid" type="text" placeholder="…apps.googleusercontent.com" autocomplete="off"></div>
       <button class="ghost" id="gSave">Save client ID</button>`
       : `<p class="muted" style="margin:0;font-size:.85rem">${S.drive.connected ? `Connected. Last Drive backup: ${S.drive.last ? short(parseISO(S.drive.last)) : 'not yet'}. Only the backup file Beursie creates is visible to it.` : 'Client ID saved. Connect once to allow Beursie to save its backup file in your Drive.'}</p>
@@ -1192,17 +1153,13 @@ function renderBudget(){
   app.querySelector('#sCover').onchange = e => { S.monthsCover = Math.max(0, parseFloat(e.target.value)||0); save(); };
   app.querySelector('#sAuto').onchange = e => { S.autoRecurring = e.target.checked; save(); if (S.autoRecurring){ const n = postRecurring(); if (n) toast(`Added ${n} monthly payment${n>1?'s':''} for this period.`); } };
   app.querySelector('#sNotify').onchange = async e => {
-    if (e.target.checked){
-      if (!('Notification' in window)){ e.target.checked = false; toast('This browser does not support notifications. Install Beursie to your home screen first.', 'warn'); return; }
-      const p = await Notification.requestPermission();
-      if (p !== 'granted'){ e.target.checked = false; toast('Notifications are blocked. Allow them in your browser settings for this site.', 'warn'); return; }
-    }
+    if (e.target.checked && !(await enableNotify())){ e.target.checked = false; return; }
     S.notify = e.target.checked; save();
   };
   app.querySelector('#dImport').onclick = () => pickFile('csv');
-  const fn = app.querySelector('#fNew'); if (fn) fn.onclick = chooseSaveFile;
-  const fo = app.querySelector('#fOpen'); if (fo) fo.onclick = openSaveFile;
-  const fa = app.querySelector('#fAllow'); if (fa) fa.onclick = () => askFile().then(ok => toast(ok ? 'Saving to your file again.' : 'Not allowed. Tap again, or pick a new file.', ok ? '' : 'warn'));
+  app.querySelector('#bkNow').onclick = () => doBackup();
+  app.querySelector('#bkRestore').onclick = restoreBackup;
+  const bp = app.querySelector('#bkPick'); if (bp) bp.onclick = () => doBackup(true);
   app.querySelector('#dReview').onclick = () => openReview();
   app.querySelectorAll('.edrow[data-fv]').forEach(row => row.addEventListener('change', e => {
     const f = S.favs[+row.dataset.fv], k = e.target.dataset.f; if (!k) return;
@@ -1216,13 +1173,59 @@ function renderBudget(){
   const gr = app.querySelector('#gRestore'); if (gr) gr.onclick = driveRestore;
   const gf = app.querySelector('#gForget'); if (gf) gf.onclick = () => { try { if (driveToken && window.google) google.accounts.oauth2.revoke(driveToken.v, () => {}); } catch(e){} driveToken = null; tokenClient = null; tokenWait = null; S.drive = blankState().drive; save(); renderBudget(); toast('Disconnected. Paste your new client ID to connect again.'); };
   app.querySelector('#dCSV').onclick = async () => { if (await deliver(`beursie-transactions-${iso(today())}.csv`, exportCSV(), 'text/csv')) toast('Exported. Share the CSV with Claude to review your month.'); };
-  app.querySelector('#dBackup').onclick = doBackup;
   app.querySelector('#dRestore').onclick = () => pickFile('json');
-  app.querySelector('#dReset').onclick = () => confirmSheet('Erase everything on this device? Back up first if you want to keep it.', 'Erase all data', async () => { const had = fileHandle; await unlinkFile(); S = blankState(); save(); render(); toast(had ? 'All data erased here. Your save file was left as it was.' : 'All data erased.'); });
+  app.querySelector('#dReset').onclick = () => confirmSheet('Erase everything on this device? Back up first if you want to keep it.', 'Erase all data', async () => { await rememberFile(null); S = blankState(); save(); setUnsaved(0); render(); toast('All data erased. Your backup file was left as it was.'); });
 }
-async function doBackup(){
-  const ok = await deliver(`beursie-backup-${iso(today())}.json`, JSON.stringify(S, null, 1), 'application/json');
-  if (ok){ S.lastExport = iso(today()); save(); render(); toast('Backup saved. Keep it somewhere safe, like Google Drive.'); }
+/* ---------- backup file ----------
+   In Chrome, Beursie remembers the backup file you pick and overwrites it on each
+   backup (Chrome may ask you to Allow once per visit). Elsewhere every backup is a
+   new dated file, shared or downloaded. */
+const canFile = 'showSaveFilePicker' in window && 'showOpenFilePicker' in window;
+const FILE_TYPES = [{ description:'Beursie backup', accept:{ 'application/json':['.json'] } }];
+let backupFile = null;
+function idb(mode, fn){ // tiny key-value store, only to remember the backup file between visits
+  return new Promise((res, rej) => {
+    const o = indexedDB.open('beursie', 1);
+    o.onupgradeneeded = () => o.result.createObjectStore('kv');
+    o.onerror = () => rej(o.error);
+    o.onsuccess = () => { const tx = o.result.transaction('kv', mode), r = fn(tx.objectStore('kv')); tx.oncomplete = () => res(r && r.result); tx.onerror = () => rej(tx.error); };
+  });
+}
+async function rememberFile(h){
+  backupFile = h;
+  try { await idb('readwrite', st => h ? st.put(h, 'backup') : st.delete('backup')); } catch(e){}
+}
+async function initBackupFile(){
+  if (!canFile) return;
+  try { backupFile = (await idb('readonly', st => st.get('backup'))) || null; } catch(e){}
+  if (backupFile && tab === 'budget') render();
+}
+async function doBackup(pickNew){
+  if (!canFile){
+    const ok = await deliver(`beursie-backup-${iso(today())}.json`, JSON.stringify(S, null, 1), 'application/json');
+    if (ok){ S.lastExport = iso(today()); save(); setUnsaved(0); render(); toast('Backup saved. Keep it somewhere safe, like Google Drive.'); }
+    return;
+  }
+  let h = pickNew === true ? null : backupFile;
+  if (!h){
+    try { h = await showSaveFilePicker({ suggestedName:'Beursie backup.json', types:FILE_TYPES }); }
+    catch(e){ if (e.name !== 'AbortError') toast('Couldn’t save there. Try another folder.', 'bad'); return; }
+  }
+  let allowed = false;
+  try { allowed = (await h.queryPermission({ mode:'readwrite' })) === 'granted' || (await h.requestPermission({ mode:'readwrite' })) === 'granted'; } catch(e){}
+  if (!allowed) return toast('Not backed up. Tap Back up now again and choose Allow, so Beursie can update your backup file.', 'warn');
+  try { const w = await h.createWritable(); await w.write(JSON.stringify(S, null, 1)); await w.close(); }
+  catch(e){ return toast('Couldn’t write the backup file. It may have been moved or deleted.', 'bad', { label:'Pick a file', fn:() => doBackup(true) }); }
+  await rememberFile(h);
+  S.lastExport = iso(today()); save(); setUnsaved(0); render(); toast(`Backed up to “${h.name}”.`);
+}
+async function restoreBackup(){
+  if (!canFile) return pickFile('json');
+  let h;
+  try { [h] = await showOpenFilePicker({ types:FILE_TYPES }); }
+  catch(e){ if (e.name !== 'AbortError') toast('Couldn’t open that file.', 'bad'); return; }
+  let text; try { text = await (await h.getFile()).text(); } catch(e){ return toast('Couldn’t read that file.', 'bad'); }
+  loadJSON(text, () => rememberFile(h)); // later backups overwrite the file you restored from
 }
 
 /* ---------- month review ---------- */
@@ -1360,7 +1363,7 @@ async function driveUpload(token){
 }
 function driveBackup(prompt, quiet){
   return getToken(prompt).then(driveUpload).then(() => {
-    S.drive.connected = true; S.drive.last = iso(today()); delete S.drive.failed; save();
+    S.drive.connected = true; S.drive.last = iso(today()); delete S.drive.failed; save(); setUnsaved(0);
     if (!quiet){ toast('Backed up to Google Drive.'); if (tab === 'budget') renderBudget(); }
   }).catch(e => { if (quiet){ S.drive.failed = iso(today()); save(); } else toast(e.message, 'bad'); });
 }
@@ -1411,7 +1414,7 @@ fileIn.onchange = async () => {
 function loadJSON(text, after){
   let d; try { d = JSON.parse(text); } catch(e){ return toast('That file isn’t valid JSON.', 'bad'); }
   if (d && d.v === 1 && Array.isArray(d.tx)){ // full backup
-    const go2 = () => { const keepDrive = S.drive; S = Object.assign(blankState(), d); S.drive = Object.assign(blankState().drive, d.drive || {}, keepDrive.clientId ? { clientId:keepDrive.clientId } : {}); S.setupDone = true; after && after(); save(); render(); toast(`Restored ${S.tx.length} transactions.`); };
+    const go2 = () => { const keepDrive = S.drive; S = Object.assign(blankState(), d); S.drive = Object.assign(blankState().drive, d.drive || {}, keepDrive.clientId ? { clientId:keepDrive.clientId } : {}); S.setupDone = true; after && after(); save(); setUnsaved(0); render(); toast(`Restored ${S.tx.length} transactions.`); };
     if (S.tx.length) confirmSheet('Replace everything on this device with this backup?', 'Restore backup', go2); else go2();
     return;
   }
@@ -1439,8 +1442,9 @@ const posted = S.setupDone ? postRecurring() : 0;
     try { history.replaceState({ tab, filter:histFilter, pkey:null }, '', location.pathname); } catch(e){}
   } })();
 render();
+if (!S.introSeen) introSheet();
 initDrive();
-initFile();
+initBackupFile();
 if (posted) toast(`Added ${posted} monthly payment${posted>1?'s':''} for this period.`);
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(()=>{});
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && S.setupDone){ const n = postRecurring(); if (n){ render(); toast(`Added ${n} monthly payment${n>1?'s':''}.`); } } });
