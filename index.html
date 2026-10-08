@@ -786,12 +786,17 @@ function autoAllocate(t){
   }
   return parts.length ? `Goals: ${parts.join(', ')}.` : '';
 }
-function carryOut(c){ // pays the carried-over money into the lumpsum fund; this month starts at the plain budget again
+function carryOut(c){ // settles the carry-over with the lumpsum fund; this month starts at the plain budget again
   const fc = S.categories.find(x => x.fund), amt = carryIn(c, periodOf(today()));
   if (!fc) return toast('Tick "Fund" on one category in the Budget tab first.', 'warn');
-  if (!(amt > 0)) return;
-  confirmSheet(`Pay ${R(amt)} from ${c.name} into the lumpsum fund?`, `Pay ${R(amt)} into lumpsum`, () => {
+  if (!amt) return;
+  if (amt > 0) confirmSheet(`Pay ${R(amt)} from ${c.name} into the lumpsum fund?`, `Pay ${R(amt)} into lumpsum`, () => {
     recordTx({ id:uid(), date:iso(today()), amount:amt, kind:'expense', catId:fc.id, note:`${c.name} carry-over`, source:'carryout', carryCat:c.id });
+    render();
+  });
+  else confirmSheet(`Cover ${c.name}’s ${R(-amt)} overspend from the lumpsum fund?`, `Take ${R(-amt)} from lumpsum`, () => {
+    // paid from the fund: lowers the fund balance, not counted as spending in the category
+    recordTx({ id:uid(), date:iso(today()), amount:-amt, kind:'expense', catId:c.id, fromFund:true, note:`${c.name} overspend covered from lumpsum`, source:'carryout', carryCat:c.id });
     render();
   });
 }
@@ -1005,7 +1010,6 @@ function renderHistory(){
     const n = e.target.closest('[data-nav]'); if (n){ histPeriod = shiftPeriod(p, +n.dataset.nav); renderHistory(); return; }
     const f = e.target.closest('[data-f]'); if (f){ histFilter = f.dataset.f; renderHistory(); f.scrollIntoView && f.scrollIntoView({ block:'nearest', inline:'center' }); return; }
     const co = e.target.closest('[data-carryout]'); if (co){ carryOut(catById(co.dataset.carryout)); return; }
-    const cr = e.target.closest('[data-carryreset]'); if (cr){ const c = catById(cr.dataset.carryreset); confirmSheet(`Start ${c.name} fresh at ${R(+c.budget||0)} this month, forgetting the earlier overspend?`, 'Start fresh', () => { c.carryFrom = periodOf(today()).key; save(); render(); toast(`${c.name} starts fresh.`); }); return; }
     const ad = e.target.closest('[data-add]'); if (ad){ const c = catById(ad.dataset.add); startAdd(c && c.id, +ad.dataset.amt || 0, ad.dataset.kind); return; }
     const t = e.target.closest('[data-tx]'); if (t) editTx(S.tx.find(x => x.id === t.dataset.tx));
   };
@@ -1025,7 +1029,7 @@ function histHeader(p){
     <div class="row between"><span class="${left<0?'danger':'muted'}" style="font-size:.88rem">${left>=0?`${R(left)} ${due?'still to pay':'left'}`:`${R(-left)} over budget`}</span>
     ${isNow ? `<button class="ghost" data-add="${c.id}" data-amt="${due?left:0}">${due?`+ Record ${R(left)}`:'+ Add'}</button>` : ''}</div>
     ${cin ? `<div class="row between" style="border-top:1px solid var(--line);padding-top:8px;gap:10px;flex-wrap:wrap"><span class="muted" style="font-size:.85rem">${cin > 0 ? `Includes ${R(cin)} carried over from earlier months. Usual budget: ${R(+c.budget||0)}.` : `${R(-cin)} overspent in earlier months comes off this month.`}</span>
-      ${isNow ? (cin > 0 ? `<button class="ghost" data-carryout="${c.id}">Pay ${R(cin)} into lumpsum</button>` : `<button class="ghost" data-carryreset="${c.id}">Start fresh</button>`) : ''}</div>` : ''}</div>`;
+      ${isNow ? `<button class="ghost" data-carryout="${c.id}">${cin > 0 ? `Pay ${R(cin)} into lumpsum` : `Cover ${R(-cin)} from lumpsum`}</button>` : ''}</div>` : ''}</div>`;
 }
 function editTx(t){
   if (!t) return;
