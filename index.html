@@ -218,6 +218,7 @@ function load(){
   S = Object.assign(blankState(), S);
 }
 function save(){
+  carryMemo = {};
   const str = JSON.stringify(S);
   if (lastSaved !== null && str !== lastSaved && S.setupDone) setUnsaved(unsaved + 1);
   lastSaved = str;
@@ -261,12 +262,29 @@ function fundBalance(){
   }
   return round2(b);
 }
+/* Carry-over: a ticked category's unspent (or overspent) money moves into next
+   month's budget. It counts from c.carryFrom, or from the latest "pay into
+   lumpsum" entry for it, so deleting that entry brings the carry-over back. */
+let carryMemo = {};
+function carryStart(c){
+  let k = c.carryFrom || '';
+  for (const t of S.tx) if (t.carryCat === c.id){ const pk = periodOf(parseISO(t.date)).key; if (pk > k) k = pk; }
+  return k;
+}
+function carryIn(c, p){
+  if (!c.carry || c.fund) return 0;
+  const mk = c.id + '|' + p.key; if (mk in carryMemo) return carryMemo[mk];
+  const from = carryStart(c); let sum = 0;
+  if (from) for (let q = shiftPeriod(p, -1), n = 0; q.key >= from && n < 240; q = shiftPeriod(q, -1), n++) sum += (+c.budget||0) - (spentBy(q)[c.id]||0);
+  return carryMemo[mk] = round2(sum);
+}
+const budgetFor = (c, p) => round2((+c.budget||0) + carryIn(c, p || periodOf(today())));
 const essentials = () => S.categories.filter(c => c.group==='Needs' || c.group==='Giving').reduce((a,c)=>a+(+c.budget||0),0);
 const floorAmt = () => essentials() * (+S.monthsCover||0);
 function summary(p){
   const sp = spentBy(p);
   const flex = S.categories.filter(c => !c.fixed && c.group !== 'Saving');
-  const flexBudget = flex.reduce((a,c)=>a+(+c.budget||0),0);
+  const flexBudget = flex.reduce((a,c)=>a+budgetFor(c,p),0);
   const flexSpent = flex.reduce((a,c)=>a+(sp[c.id]||0),0);
   const total = S.categories.reduce((a,c)=>a+(+c.budget||0),0);
   const uncat = S.tx.filter(t => t.kind==='expense' && !t.catId && inPeriod(t,p)).reduce((a,t)=>a+t.amount,0);
@@ -280,7 +298,7 @@ function flexSpentOn(p, from, to){ // inclusive ISO dates within period
 }
 function daily(){
   const p = periodOf(today()), td = iso(today());
-  const flexBudget = S.categories.filter(isFlex).reduce((a,c)=>a+(+c.budget||0),0);
+  const flexBudget = S.categories.filter(isFlex).reduce((a,c)=>a+budgetFor(c,p),0);
   const before = flexSpentOn(p, iso(p.start), iso(new Date(today().getTime()-86400000)));
   const spent = flexSpentOn(p, td, td);
   const daysLeft = daysBetween(today(), p.end) + 1;
@@ -288,9 +306,9 @@ function daily(){
   const tomorrow = daysLeft > 1 ? Math.max(0, (flexBudget - before - spent) / (daysLeft - 1)) : 0;
   return { p, flexBudget, before, spent, daysLeft, allowance, tomorrow, left: allowance - spent };
 }
-function catState(c, spent){
-  const b = +c.budget || 0;
-  if (!b) return spent > 0 ? 'bad' : 'none';
+function catState(c, spent, b){
+  if (b === undefined) b = budgetFor(c);
+  if (b <= 0) return spent > 0 || b < 0 ? 'bad' : 'none';
   const pct = spent / b * 100;
   if (pct > 100.5) return 'bad';
   if (pct >= S.alertPct) return 'warn';
@@ -325,9 +343,9 @@ function alertsFor(p){
   const len = daysBetween(p.start, p.end) + 1, gone = Math.min(len, daysBetween(p.start, now) + 1);
   for (const c of S.categories){
     if (c.group === 'Saving') continue;
-    const s = sp[c.id] || 0, st = catState(c, s);
-    if (st === 'bad') out.push({ lvl:'bad', cat:c.id, text:`${c.name} is over budget: ${R(s)} of ${R(+c.budget||0)}.` });
-    else if (st === 'warn' && !c.fixed) out.push({ lvl:'warn', cat:c.id, text:`${c.name} is at ${Math.round(s/c.budget*100)}% with ${len-gone} days to go.` });
+    const s = sp[c.id] || 0, b = budgetFor(c, p), st = catState(c, s, b);
+    if (st === 'bad') out.push({ lvl:'bad', cat:c.id, text:`${c.name} is over budget: ${R(s)} of ${R(b)}.` });
+    else if (st === 'warn' && !c.fixed) out.push({ lvl:'warn', cat:c.id, text:`${c.name} is at ${Math.round(s/b*100)}% with ${len-gone} days to go.` });
   }
   if (flexBudget && p.key === periodOf(now).key){
     const spentPct = flexSpent/flexBudget*100, timePct = gone/len*100;
@@ -348,9 +366,10 @@ function notify(text){
   } catch(e){}
 }
 function checkThresholds(catId){
-  const c = catById(catId); if (!c || !c.budget || c.group==='Saving') return null;
-  const p = periodOf(today()), s = spentBy(p)[catId] || 0, pct = s / c.budget * 100;
-  const left = c.budget - s;
+  const c = catById(catId); if (!c || c.group==='Saving') return null;
+  const p = periodOf(today()), b = budgetFor(c, p); if (b <= 0 && !c.carry) return null;
+  const s = spentBy(p)[catId] || 0, pct = b > 0 ? s / b * 100 : 101;
+  const left = round2(b - s);
   let lvl = null, msg = `${c.name}: ${R(Math.max(0,left))} left (${Math.round(pct)}% used)`;
   if (pct > 100.5){ lvl='bad'; msg = `${c.name} is ${R(-left)} over budget.`; }
   else if (pct >= S.alertPct){ lvl='warn'; }
@@ -499,7 +518,7 @@ async function deliver(name, text, type){
 function claudeSummary(){
   const p = periodOf(today()), { sp, flexBudget, flexSpent } = summary(p);
   const lines = [`Beursie summary for budget period ${p.label} (as of ${short(today())}).`, `Salary: ${R(+S.salary||0)}. Flexible spending: ${R(flexSpent)} of ${R(flexBudget)}.`, '', 'Category | spent | budget'];
-  for (const g of GROUPS) for (const c of S.categories.filter(c=>c.group===g)) lines.push(`${c.name} (${g}) | ${R(sp[c.id]||0)} | ${R(+c.budget||0)}`);
+  for (const g of GROUPS) for (const c of S.categories.filter(c=>c.group===g)) lines.push(`${c.name} (${g}) | ${R(sp[c.id]||0)} | ${R(budgetFor(c,p))}${carryIn(c,p) ? ` (incl. ${R(carryIn(c,p))} carried over)` : ''}`);
   lines.push('', `Lumpsum fund: ${R(fundBalance())} (floor ${R(floorAmt())}).`);
   const al = alertsFor(p).filter(a=>a.lvl!=='info'); if (al.length){ lines.push('', 'Alerts:'); al.forEach(a=>lines.push('- '+a.text)); }
   return lines.join('\n');
@@ -634,8 +653,8 @@ function renderAdd(){
     <div class="amount num ${amt?'':'empty'}" aria-live="polite"><span class="cur">R</span>${amt ? esc(amt) : '0'}</div>
     ${kind === 'expense' && S.favs.length ? `<div class="favs" id="favs" aria-label="Favourites: one tap logs it">${S.favs.map(f => `<button class="fav" data-fav="${f.id}">★ ${esc(f.label)}<span>${R(f.amount, f.amount % 1 ? 2 : 0)}</span></button>`).join('')}</div>` : ''}
     ${kind === 'expense' ? `<div class="chips" id="chips">${usageOrder().map(c => {
-      const s = sp[c.id]||0, left = (+c.budget||0) - s, st = catState(c, s);
-      const sub = c.group === 'Saving' ? (left > 0 ? `${R(left)} to go` : 'done') : c.budget ? (left >= 0 ? `${R(left)} left` : `${R(-left)} over`) : 'no budget';
+      const b = budgetFor(c, p), s = sp[c.id]||0, left = b - s, st = catState(c, s, b);
+      const sub = c.group === 'Saving' ? (left > 0 ? `${R(left)} to go` : 'done') : b || c.carry ? (left >= 0 ? `${R(left)} left` : `${R(-left)} over`) : 'no budget';
       return `<button class="chip" data-cat="${c.id}" aria-pressed="${draft.catId===c.id}"><b>${esc(c.name)}</b><small class="${c.group!=='Saving'&&st==='bad'?'bad':c.group!=='Saving'&&st==='warn'?'warn':''}">${sub}</small></button>`;
     }).join('')}</div>` : `<p class="muted" style="margin:0;font-size:.88rem">${kind==='income'
       ? 'Money that came in: salary, a sale, a refund. It shows under History → Income & transfers and doesn’t affect your budget.'
@@ -767,6 +786,15 @@ function autoAllocate(t){
   }
   return parts.length ? `Goals: ${parts.join(', ')}.` : '';
 }
+function carryOut(c){ // pays the carried-over money into the lumpsum fund; this month starts at the plain budget again
+  const fc = S.categories.find(x => x.fund), amt = carryIn(c, periodOf(today()));
+  if (!fc) return toast('Tick "Fund" on one category in the Budget tab first.', 'warn');
+  if (!(amt > 0)) return;
+  confirmSheet(`Pay ${R(amt)} from ${c.name} into the lumpsum fund?`, `Pay ${R(amt)} into lumpsum`, () => {
+    recordTx({ id:uid(), date:iso(today()), amount:amt, kind:'expense', catId:fc.id, note:`${c.name} carry-over`, source:'carryout', carryCat:c.id });
+    render();
+  });
+}
 function goalsSheet(){
   const free = freeMoney();
   sheet(`<div class="stack">
@@ -831,11 +859,11 @@ function renderOverview(){
       ${GROUPS.map(g => {
         const cs = S.categories.filter(c => c.group === g); if (!cs.length) return '';
         return `<div class="eyebrow groupname">${g}</div>` + cs.map(c => {
-          const s = sp[c.id]||0, b = +c.budget||0, st = catState(c, s);
+          const s = sp[c.id]||0, b = budgetFor(c, p), st = catState(c, s, b), cin = carryIn(c, p);
           let pill;
           if (c.fixed){ pill = s >= b*0.95 && b ? '<span class="pill good">Paid</span>' : (s ? '<span class="pill">Part paid</span>' : '<span class="pill">Due</span>'); if (st==='bad') pill = '<span class="pill bad">Over</span>'; }
           else pill = st==='bad' ? '<span class="pill bad">Over</span>' : st==='warn' ? `<span class="pill warn">${Math.round(s/b*100)}%</span>` : '';
-          return `<button class="cat" data-cat="${c.id}"><div class="name">${esc(c.name)} ${pill}</div><div class="fig">${R(s)} <span class="muted">/ ${R(b)}</span> <span class="chev">›</span></div><div class="bar"><i class="${st==='bad'?'bad':st==='warn'&&!c.fixed?'warn':''}" style="width:${b?Math.min(100,s/b*100):(s?100:0)}%"></i></div></button>`;
+          return `<button class="cat" data-cat="${c.id}"><div class="name">${esc(c.name)} ${pill}${cin ? ` <span class="pill ${cin < 0 ? 'bad' : ''}">${cin > 0 ? '+' : ''}${R(cin)} carried</span>` : ''}</div><div class="fig">${R(s)} <span class="muted">/ ${R(b)}</span> <span class="chev">›</span></div><div class="bar"><i class="${st==='bad'?'bad':st==='warn'&&!c.fixed?'warn':''}" style="width:${b?Math.min(100,s/b*100):(s?100:0)}%"></i></div></button>`;
         }).join('');
       }).join('')}
     </div>
@@ -976,6 +1004,8 @@ function renderHistory(){
   app.onclick = e => {
     const n = e.target.closest('[data-nav]'); if (n){ histPeriod = shiftPeriod(p, +n.dataset.nav); renderHistory(); return; }
     const f = e.target.closest('[data-f]'); if (f){ histFilter = f.dataset.f; renderHistory(); f.scrollIntoView && f.scrollIntoView({ block:'nearest', inline:'center' }); return; }
+    const co = e.target.closest('[data-carryout]'); if (co){ carryOut(catById(co.dataset.carryout)); return; }
+    const cr = e.target.closest('[data-carryreset]'); if (cr){ const c = catById(cr.dataset.carryreset); confirmSheet(`Start ${c.name} fresh at ${R(+c.budget||0)} this month, forgetting the earlier overspend?`, 'Start fresh', () => { c.carryFrom = periodOf(today()).key; save(); render(); toast(`${c.name} starts fresh.`); }); return; }
     const ad = e.target.closest('[data-add]'); if (ad){ const c = catById(ad.dataset.add); startAdd(c && c.id, +ad.dataset.amt || 0, ad.dataset.kind); return; }
     const t = e.target.closest('[data-tx]'); if (t) editTx(S.tx.find(x => x.id === t.dataset.tx));
   };
@@ -986,14 +1016,16 @@ function histHeader(p){
   if (histFilter === '@fund'){ const fb = fundBalance(), fl = floorAmt(), fc = S.categories.find(c => c.fund);
     return `<div class="card stack" style="margin-top:10px;gap:6px"><div class="row between num"><span class="muted">Balance</span><b>${R(fb)}</b></div><div class="row between num"><span class="muted">Floor</span><span>${R(fl)}</span></div>${fc?`<button class="ghost" data-add="${fc.id}" data-amt="${Math.max(0,(+fc.budget||0)-(spentBy(periodOf(today()))[fc.id]||0))}">+ Add a contribution</button>`:''}</div>`; }
   const c = catById(histFilter); if (!c) return '';
-  const s = spentBy(p)[c.id] || 0, b = +c.budget || 0, left = b - s, st = catState(c, s);
+  const s = spentBy(p)[c.id] || 0, b = budgetFor(c, p), left = round2(b - s), st = catState(c, s, b), cin = carryIn(c, p);
   const isNow = p.key === periodOf(today()).key;
   const due = (c.fixed || c.group === 'Saving') && s < b * 0.95;
   return `<div class="card stack" style="margin-top:10px;gap:8px">
     <div class="row between num"><span class="muted">${esc(p.label)}</span><span><b>${R(s)}</b> <span class="muted">of ${R(b)}</span></span></div>
     <div class="bar" style="height:8px"><i class="${st==='bad'?'bad':st==='warn'&&!c.fixed?'warn':''}" style="width:${b?Math.min(100,s/b*100):(s?100:0)}%"></i></div>
     <div class="row between"><span class="${left<0?'danger':'muted'}" style="font-size:.88rem">${left>=0?`${R(left)} ${due?'still to pay':'left'}`:`${R(-left)} over budget`}</span>
-    ${isNow ? `<button class="ghost" data-add="${c.id}" data-amt="${due?left:0}">${due?`+ Record ${R(left)}`:'+ Add'}</button>` : ''}</div></div>`;
+    ${isNow ? `<button class="ghost" data-add="${c.id}" data-amt="${due?left:0}">${due?`+ Record ${R(left)}`:'+ Add'}</button>` : ''}</div>
+    ${cin ? `<div class="row between" style="border-top:1px solid var(--line);padding-top:8px;gap:10px;flex-wrap:wrap"><span class="muted" style="font-size:.85rem">${cin > 0 ? `Includes ${R(cin)} carried over from earlier months. Usual budget: ${R(+c.budget||0)}.` : `${R(-cin)} overspent in earlier months comes off this month.`}</span>
+      ${isNow ? (cin > 0 ? `<button class="ghost" data-carryout="${c.id}">Pay ${R(cin)} into lumpsum</button>` : `<button class="ghost" data-carryreset="${c.id}">Start fresh</button>`) : ''}</div>` : ''}</div>`;
 }
 function editTx(t){
   if (!t) return;
@@ -1046,7 +1078,7 @@ function renderBudget(){
     </div>
     <div class="card">
       <div class="row between"><h2>Categories</h2><button class="link" id="addCat">+ Add</button></div>
-      <p class="muted" style="margin:4px 0 0;font-size:.82rem">Fixed = a set monthly payment, kept out of "left to spend". Fund = contributions grow your lumpsum fund.</p>
+      <p class="muted" style="margin:4px 0 0;font-size:.82rem">Fixed = a set monthly payment, kept out of "left to spend". Fund = contributions grow your lumpsum fund. Carry over = what you don't spend is added to next month's budget, until you pay it into the lumpsum fund.</p>
       ${S.categories.map((c,i) => `<div class="edrow" data-i="${i}">
         <input type="text" data-f="name" aria-label="Category name" value="${esc(c.name)}">
         <input type="number" inputmode="decimal" data-f="budget" aria-label="Monthly budget for ${esc(c.name)}" value="${c.budget||''}" placeholder="R 0">
@@ -1054,6 +1086,7 @@ function renderBudget(){
           <select data-f="group" aria-label="Group" style="width:auto">${GROUPS.map(g=>`<option ${c.group===g?'selected':''}>${g}</option>`).join('')}</select>
           <label class="toggle"><input type="checkbox" data-f="fixed" ${c.fixed?'checked':''}> Fixed</label>
           <label class="toggle"><input type="checkbox" data-f="fund" ${c.fund?'checked':''}> Fund</label>
+          ${c.fund ? '' : `<label class="toggle"><input type="checkbox" data-f="carry" ${c.carry?'checked':''}> Carry over</label>`}
           <button class="link danger" data-del="${i}" style="margin-left:auto">Remove</button>
         </div></div>`).join('')}
     </div>
@@ -1127,6 +1160,7 @@ function renderBudget(){
     const c = S.categories[+row.dataset.i], f = e.target.dataset.f; if (!f) return;
     if (f === 'budget') c.budget = num(e.target.value);
     else if (f === 'fixed' || f === 'fund') c[f] = e.target.checked;
+    else if (f === 'carry'){ c.carry = e.target.checked; if (c.carry) c.carryFrom = periodOf(today()).key; } // counts from this month on
     else c[f] = e.target.value.trim() || c[f];
     save(); renderBudget();
   }));
@@ -1260,7 +1294,9 @@ function renderReview(){
   const living = round2(counted.reduce((a,t) => a + t.amount, 0) - saved);
   const fromFund = round2(S.tx.filter(t => t.kind === 'expense' && t.fromFund && inPeriod(t, p)).reduce((a,t) => a + t.amount, 0));
   const flexLeft = round2(flexBudget - flexSpent);
-  const rows = S.categories.filter(c => c.group !== 'Saving').map(c => { const s = sp[c.id] || 0, b = +c.budget || 0; return { c, s, b, d: round2(b - s) }; });
+  const rows = S.categories.filter(c => c.group !== 'Saving').map(c => { const s = sp[c.id] || 0, b = budgetFor(c, p); return { c, s, b, d: round2(b - s) }; });
+  const carried = round2(rows.filter(r => isFlex(r.c) && r.c.carry).reduce((a,r) => a + r.d, 0));
+  const rollLeft = round2(flexLeft - carried); // carry-over categories keep their leftover
   const best = rows.filter(r => isFlex(r.c) && r.b > 0 && r.d > 0).sort((x,y) => y.d - x.d)[0];
   const worst = rows.filter(r => r.d < -0.5).sort((x,y) => x.d - y.d)[0];
   const isPast = p.end < today(), done = S.reviewed[p.key];
@@ -1281,6 +1317,7 @@ function renderReview(){
       ${best ? `<div>Best: <b>${esc(best.c.name)}</b>, ${R(best.d)} under budget.</div>` : ''}
       ${worst ? `<div>Watch: <b>${esc(worst.c.name)}</b>, ${R(-worst.d)} over budget.</div>` : ''}
       ${fromFund ? `<div class="muted">${R(fromFund)} was paid from the lumpsum fund and isn’t counted above.</div>` : ''}</div>` : ''}
+    ${carried ? `<div class="alert info"><span class="dot"></span><span>${carried > 0 ? `${R(carried)} left in carry-over categories moves into next month’s budgets.` : `${R(-carried)} overspent in carry-over categories comes off next month’s budgets.`}</span></div>` : ''}
     <div class="card">
       <h2>Category by category</h2>
       <div style="overflow-x:auto"><table class="rtable"><thead><tr><th>Category</th><th>Spent</th><th>Budget</th><th>Diff</th></tr></thead><tbody>
@@ -1292,11 +1329,11 @@ function renderReview(){
       ${!recon ? `<p class="muted" style="margin:0;font-size:.88rem">Download your statement for this month as a CSV from your banking app and choose it here. Beursie lists what it missed, what’s in Beursie but not on the statement, and where amounts differ. Nothing changes until you confirm.</p>
         <button class="primary" data-act="recon">Choose bank statement (CSV)</button>` : reconHTML(recon)}
     </div>
-    ${isPast && flexLeft > 0 ? `<div class="card stack">
+    ${isPast && rollLeft > 0 ? `<div class="card stack">
       <h2>Roll over what’s left</h2>
       ${rolledTx ? `<p style="margin:0">${R(rolledTx.amount)} moved to the lumpsum fund. <span class="muted">Undo it by deleting the "Rollover" entry in History.</span></p>`
-      : `<p class="muted" style="margin:0;font-size:.88rem">You came in ${R(flexLeft)} under your flexible budget. Move it into the lumpsum fund so a good month grows your savings. Do the same transfer in your banking app.</p>
-      <div class="row" style="gap:8px"><input type="number" inputmode="decimal" id="rollAmt" value="${Math.floor(flexLeft/10)*10}" aria-label="Amount to roll over" style="flex:1;min-width:0"><button class="primary" data-act="roll" style="width:auto;padding:12px 16px">Move to fund</button></div>`}
+      : `<p class="muted" style="margin:0;font-size:.88rem">You came in ${R(rollLeft)} under your flexible budget${carried ? ' in categories that don’t carry over' : ''}. Move it into the lumpsum fund so a good month grows your savings. Do the same transfer in your banking app.</p>
+      <div class="row" style="gap:8px"><input type="number" inputmode="decimal" id="rollAmt" value="${Math.floor(rollLeft/10)*10}" aria-label="Amount to roll over" style="flex:1;min-width:0"><button class="primary" data-act="roll" style="width:auto;padding:12px 16px">Move to fund</button></div>`}
     </div>` : ''}
     ${done ? `<p class="muted" style="text-align:center;margin:4px 0">Review done on ${short(parseISO(done))}.</p>` : `<button class="ghost" data-act="done">${isPast ? 'Mark this review done' : 'Close'}</button>`}
     <button class="link" data-act="export" style="align-self:center">Export everything as CSV for Claude</button>
