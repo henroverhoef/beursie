@@ -32,6 +32,14 @@ On first open, a short tip walks you through installing Beursie as an app and tu
 - **History:** browse by budget month and filter by category. Tap any entry to edit it. When you give an imported shop a category, Beursie remembers it for next time.
 - **Budget:** change amounts, add or remove categories, and set up monthly payments that are added automatically (rent, tithe, subscriptions, savings).
 
+## Carry-over categories
+
+Tick **Carry over** on a category in **Budget → Categories** and what you don't spend moves into next month's budget. For example, if you spend R500 of a R1,500 hobbies budget, next month shows 0 / R2,500. Overspending works the other way: it comes off next month. Carrying over starts from the month you tick it.
+
+The Overview shows how much each category has carried, e.g. "+R1,000 carried". When you want the money out, tap the category, then **Pay R… into lumpsum**. That records a contribution to your lumpsum fund (do the same transfer in your banking app) and the category starts again at its usual budget. Deleting that entry in History undoes it. If the category carried an overspend instead (say R1,600 of R1,500, so next month is 0 / R1,400), the button is **Cover R100 from lumpsum**: it takes the R100 out of the fund and the category goes back to its usual budget.
+
+The month review's **Roll over** only offers money from categories that don't carry over, so nothing is counted twice.
+
 ## Favourites, goals and the month review
 
 - **Favourites:** the ★ row on the Add screen logs a purchase in one tap, and Undo appears for a few seconds in case you tapped by mistake. Save one from the Add screen with "☆ Save … as a favourite", or add suggestions in Budget → Favourites. Suggestions are purchases you've made 3 or more times at the same amount.
