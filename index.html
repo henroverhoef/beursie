@@ -1301,7 +1301,8 @@ function renderReview(){
   const rows = S.categories.filter(c => c.group !== 'Saving').map(c => { const s = sp[c.id] || 0, b = budgetFor(c, p); return { c, s, b, d: round2(b - s) }; });
   const carried = round2(rows.filter(r => isFlex(r.c) && r.c.carry).reduce((a,r) => a + r.d, 0));
   const rollLeft = round2(flexLeft - carried); // carry-over categories keep their leftover
-  const ncRows = rows.filter(r => isFlex(r.c) && !r.c.carry), ncSpent = round2(ncRows.reduce((a,r) => a + r.s, 0)), ncBudget = round2(ncRows.reduce((a,r) => a + r.b, 0));
+  // The month is judged against the usual monthly budgets: carried-over money neither hides nor adds an overspend.
+  const monthBudget = round2(S.categories.filter(isFlex).reduce((a,c) => a + (+c.budget||0), 0)), monthLeft = round2(monthBudget - flexSpent);
   const best = rows.filter(r => isFlex(r.c) && r.b > 0 && r.d > 0).sort((x,y) => y.d - x.d)[0];
   const worst = rows.filter(r => r.d < -0.5).sort((x,y) => x.d - y.d)[0];
   const isPast = p.end < today(), done = S.reviewed[p.key];
@@ -1317,7 +1318,7 @@ function renderReview(){
       <div class="stat"><span class="eyebrow">Money in</span><b>${R(inc)}</b></div>
       <div class="stat"><span class="eyebrow">Living costs</span><b>${R(living)}</b></div>
       <div class="stat"><span class="eyebrow">Saved</span><b class="good-t">${R(saved)}</b><span class="muted" style="font-size:.78rem">${inc ? Math.round(saved/inc*100) + '% of money in' : ''}</span></div>
-      <div class="stat"><span class="eyebrow">Flexible budget</span><b class="${rollLeft < -0.5 ? 'bad-t' : 'good-t'}">${rollLeft < -0.5 ? R(-rollLeft) + ' over' : R(rollLeft) + ' under'}</b><span class="muted" style="font-size:.78rem">${R(ncSpent)} of ${R(ncBudget)}${carried || S.categories.some(c => isFlex(c) && c.carry) ? ', not counting carry-over categories' : ''}</span></div>
+      <div class="stat"><span class="eyebrow">Flexible budget</span><b class="${monthLeft < -0.5 ? 'bad-t' : 'good-t'}">${monthLeft < -0.5 ? R(-monthLeft) + ' over' : R(monthLeft) + ' under'}</b><span class="muted" style="font-size:.78rem">${R(flexSpent)} of ${R(monthBudget)}${S.categories.some(c => isFlex(c) && c.carry) ? ', usual monthly budgets' : ''}</span></div>
     </div>
     ${best || worst || fromFund ? `<div class="card stack" style="gap:6px">
       ${best ? `<div>Best: <b>${esc(best.c.name)}</b>, ${R(best.d)} under budget.</div>` : ''}
