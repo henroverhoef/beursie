@@ -47,6 +47,7 @@ The month review's **Roll over** only offers money from categories that don't ca
 - **Month review:** opens after each budget month ends (Overview banner, or Budget → Month review). It shows money in, living costs, savings and each category against its budget.
   - **Check against your bank:** pick the month's bank CSV. Beursie lists what it missed, where amounts differ and what's in Beursie but not on the statement. Nothing changes until you tap to add or fix.
   - **Roll over:** moves unspent flexible money into the lumpsum fund. Do the same transfer in your banking app.
+  - **Cover the overspend:** if you went over your flexible budget, record that the extra came out of the lumpsum fund. The fund goes down by that amount, but the month still shows as over budget, so a bad month never looks like a good one. Carry-over categories are left out of both, since they carry their own leftovers and overspends.
 - **Icon shortcuts:** long-press the Beursie icon for Add expense, Today, Overview and Month review. Android picks up new shortcuts when it next refreshes the installed app, usually within a day. If they don't appear, remove and reinstall the app (back up first).
 
 ## Backing up (a few taps, no setup)
