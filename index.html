@@ -109,6 +109,11 @@ details.card > summary{font-family:var(--display);font-weight:700;font-size:1.05
 .bar{grid-column:1/-1;height:6px;border-radius:99px;background:var(--chip);overflow:hidden}
 .bar i{display:block;height:100%;background:var(--good);border-radius:99px}
 .bar i.warn{background:var(--warn)} .bar i.bad{background:var(--bad)}
+.pbar{position:relative;background:none;overflow:visible}
+.pbar + .pbar{margin-top:3px}
+.pbar span{position:absolute;top:0;bottom:0;left:0;border-radius:99px;background:var(--chip)}
+.pbar span.f{background:var(--good)} .pbar span.f.warn{background:var(--warn)} .pbar span.f.bad{background:var(--bad)}
+.pbar span.m{width:2px;border-radius:0;background:var(--surface)} /* where the budget ends on an over-budget bar */
 .pill{font-size:.7rem;font-weight:700;padding:2px 7px;border-radius:99px;background:var(--chip);color:var(--muted);letter-spacing:.02em}
 .pill.warn{background:var(--warn-soft);color:var(--warn)} .pill.bad{background:var(--bad-soft);color:var(--bad)} .pill.good{background:var(--accent-soft);color:var(--good)}
 .groupname{margin-top:10px}
@@ -861,16 +866,16 @@ function renderOverview(){
     }).join('')}</div>` : ''}
     <button class="card tapcard row between" data-act="income" style="width:100%;text-align:left;color:inherit"><span><span class="eyebrow">Money in this period</span><br><b class="num" style="font-size:1.1rem">${R(incomeIn(p))}</b> <span class="muted" style="font-size:.85rem">of ${R(+S.salary||0)} salary expected</span></span><span class="chev">›</span></button>
     <div class="card">
-      ${GROUPS.map(g => {
+      ${(() => { const U = barUnit(S.categories.map(c => Math.max(budgetFor(c, p), sp[c.id]||0))); return GROUPS.map(g => {
         const cs = S.categories.filter(c => c.group === g); if (!cs.length) return '';
         return `<div class="eyebrow groupname">${g}</div>` + cs.map(c => {
           const s = sp[c.id]||0, b = budgetFor(c, p), st = catState(c, s, b), cin = carryIn(c, p);
           let pill;
           if (c.fixed){ pill = s >= b*0.95 && b ? '<span class="pill good">Paid</span>' : (s ? '<span class="pill">Part paid</span>' : '<span class="pill">Due</span>'); if (st==='bad') pill = '<span class="pill bad">Over</span>'; }
           else pill = st==='bad' ? '<span class="pill bad">Over</span>' : st==='warn' ? `<span class="pill warn">${Math.round(s/b*100)}%</span>` : '';
-          return `<button class="cat" data-cat="${c.id}"><div class="name">${esc(c.name)} ${pill}${cin ? ` <span class="pill ${cin < 0 ? 'bad' : ''}">${cin > 0 ? '+' : ''}${R(cin)} carried</span>` : ''}</div><div class="fig">${R(s)} <span class="muted">/ ${R(b)}</span> <span class="chev">›</span></div><div class="bar"><i class="${st==='bad'?'bad':st==='warn'&&!c.fixed?'warn':''}" style="width:${b?Math.min(100,s/b*100):(s?100:0)}%"></i></div></button>`;
+          return `<button class="cat" data-cat="${c.id}"><div class="name">${esc(c.name)} ${pill}${cin ? ` <span class="pill ${cin < 0 ? 'bad' : ''}">${cin > 0 ? '+' : ''}${R(cin)} carried</span>` : ''}</div><div class="fig">${R(s)} <span class="muted">/ ${R(b)}</span> <span class="chev">›</span></div>${propBar(b, s, U, st==='bad'?'bad':st==='warn'&&!c.fixed?'warn':'')}</button>`;
         }).join('');
-      }).join('')}
+      }).join(''); })()}
     </div>
     <div class="card stack">
       <h2>Lumpsum fund</h2>
@@ -901,6 +906,23 @@ function renderOverview(){
     if (a.dataset.act === 'reviewmonth') openReview(reviewDue() || undefined);
     if (a.dataset.act === 'claude'){ const txt = claudeSummary(); (navigator.clipboard ? navigator.clipboard.writeText(txt) : Promise.reject()).then(()=>toast('Summary copied. Paste it into a chat with Claude.'), ()=>sheet(`<div class="stack"><h2>Summary</h2><textarea style="width:100%;height:240px">${esc(txt)}</textarea></div>`)); }
   };
+}
+/* Proportional bars: one full line stands for the same amount (U) for every
+   category, so a R2 500 budget is half as long as a R5 000 one. Long bars wrap
+   onto up to 3 lines so small budgets stay visible. */
+function barUnit(vals){
+  const v = vals.filter(x => x > 0); if (!v.length) return 1;
+  const mx = Math.max(...v), mn = Math.min(...v);
+  return mn / 0.1 >= mx ? mx : Math.max(mx / 3, mn / 0.1); // smallest bar gets ≥10% of a line where it can
+}
+function propBar(b, s, U, cls){
+  b = Math.max(0, b); const len = Math.max(b, s), rows = Math.max(1, Math.ceil(len / U - 1e-9));
+  let out = '';
+  for (let i = 0; i < rows; i++){
+    const lo = i * U, w = x => Math.max(0, Math.min(U, x - lo)) / U * 100, mark = s > b && b > lo && b < lo + U;
+    out += `<div class="bar pbar" aria-hidden="true">${w(b) ? `<span style="width:${w(b)}%"></span>` : ''}${w(s) ? `<span class="f ${cls}" style="width:${w(s)}%"></span>` : ''}${mark ? `<span class="m" style="left:calc(${w(b)}% - 1px)"></span>` : ''}</div>`;
+  }
+  return out;
 }
 function dailyCard(compact){
   const d = daily(), pct = d.allowance ? d.spent / d.allowance * 100 : (d.spent ? 101 : 0);
