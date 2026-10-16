@@ -842,6 +842,8 @@ function goalsSheet(){
 
 /* ---------- overview ---------- */
 const incomeIn = p => S.tx.filter(t => t.kind === 'income' && inPeriod(t, p)).reduce((a,t) => a + t.amount, 0);
+const CAT_SORTS = [['group','By group'],['budget-desc','Budget: largest first'],['budget-asc','Budget: smallest first'],['spent-desc','Spent: most first'],['spent-asc','Spent: least first'],['used-desc','Most used (%) first'],['left-asc','Least left first'],['name','A to Z']];
+let catSort = 'group'; try { const v = localStorage.getItem('beursie.catSort'); if (CAT_SORTS.some(x => x[0] === v)) catSort = v; } catch(e){}
 function renderOverview(){
   const p = periodOf(today()), now = today();
   const { sp, flexBudget, flexSpent } = summary(p);
@@ -866,9 +868,14 @@ function renderOverview(){
     }).join('')}</div>` : ''}
     <button class="card tapcard row between" data-act="income" style="width:100%;text-align:left;color:inherit"><span><span class="eyebrow">Money in this period</span><br><b class="num" style="font-size:1.1rem">${R(incomeIn(p))}</b> <span class="muted" style="font-size:.85rem">of ${R(+S.salary||0)} salary expected</span></span><span class="chev">›</span></button>
     <div class="card">
-      ${(() => { const U = barUnit(S.categories.map(c => Math.max(budgetFor(c, p), sp[c.id]||0))); return GROUPS.map(g => {
-        const cs = S.categories.filter(c => c.group === g); if (!cs.length) return '';
-        return `<div class="eyebrow groupname">${g}</div>` + cs.map(c => {
+      <div class="row between" style="gap:10px"><h2>Categories</h2>
+        <select id="catSort" aria-label="Order categories by" style="width:auto;padding:6px 8px;font-size:.85rem">${CAT_SORTS.map(([k, label]) => `<option value="${k}" ${k === catSort ? 'selected' : ''}>${label}</option>`).join('')}</select></div>
+      ${(() => { const U = barUnit(S.categories.map(c => Math.max(budgetFor(c, p), sp[c.id]||0)));
+        const val = { budget: c => budgetFor(c, p), spent: c => sp[c.id]||0, left: c => budgetFor(c, p) - (sp[c.id]||0), used: c => { const b = budgetFor(c, p), s = sp[c.id]||0; return b > 0 ? s / b : s > 0 ? Infinity : 0; } };
+        const [key, dir] = catSort.split('-'), sorted = key === 'group' ? null : S.categories.slice().sort((a, b) => key === 'name' ? a.name.localeCompare(b.name) : (dir === 'asc' ? 1 : -1) * (val[key](a) - val[key](b)) || a.name.localeCompare(b.name));
+        return (sorted ? [[null, sorted]] : GROUPS.map(g => [g, S.categories.filter(c => c.group === g)])).map(([g, cs]) => {
+        if (!cs.length) return '';
+        return (g ? `<div class="eyebrow groupname">${g}</div>` : '<div style="height:6px"></div>') + cs.map(c => {
           const s = sp[c.id]||0, b = budgetFor(c, p), st = catState(c, s, b), cin = carryIn(c, p);
           let pill;
           if (c.fixed){ pill = s >= b*0.95 && b ? '<span class="pill good">Paid</span>' : (s ? '<span class="pill">Part paid</span>' : '<span class="pill">Due</span>'); if (st==='bad') pill = '<span class="pill bad">Over</span>'; }
@@ -892,6 +899,7 @@ function renderOverview(){
     ${unsaved || (!S.lastExport && S.tx.length) ? `<button class="card tapcard row between" data-act="backup" style="width:100%;text-align:left;color:inherit"><span>${unsaved ? `<b class="num">${unsaved}</b> change${unsaved>1?'s':''} not backed up yet` : 'Not backed up yet'}</span><b style="color:var(--accent);white-space:nowrap">Back up now ›</b></button>` : ''}
     <div class="row" style="flex-wrap:wrap"><button class="ghost" data-act="reviewmonth" style="flex:1">Month review</button><button class="ghost" data-act="claude" style="flex:1">Copy summary for Claude</button></div>
   </div>`;
+  app.querySelector('#catSort').onchange = e => { catSort = e.target.value; try { localStorage.setItem('beursie.catSort', catSort); } catch(x){} renderOverview(); };
   app.onclick = e => {
     const cb = e.target.closest('[data-cat]'); if (cb){ openCat(cb.dataset.cat); return; }
     const a = e.target.closest('[data-act]'); if (!a) return;
