@@ -42,6 +42,15 @@ If you change the amount of a carry-over category that has money carried, Beursi
 
 The month review judges each month against your usual monthly budgets, so carried money neither hides nor adds an overspend. For example, spending R1,600 of a R1,500 hobbies budget makes the month R100 over, even if R3,000 had carried up. Spending R1,400 makes it R100 under, even if an earlier overspend left only R1,000. **Roll over** and **Cover the overspend** only use categories that don't carry over, because carry-over categories settle their own money.
 
+## When a fixed amount isn't exact
+
+If a fixed category (rent, utilities, subscriptions…) comes in under or over its amount, tap it on the Overview. Under its figures, Beursie offers to move the difference for this month:
+
+- **Came in under** (e.g. R4,700 of R5,000): move the R300 to the **lumpsum fund** (recorded as a contribution; do the transfer in your banking app) or to **another category**, whose budget goes up by R300 for this month.
+- **Came in over** (e.g. R5,300 of R5,000): cover the R300 from the **lumpsum fund** (the fund balance goes down) or from **another category**, whose budget goes down by R300 for this month.
+
+Moves count for that month only, and each one shows on both categories with an **Undo**. If you move money into a carry-over category and don't spend it, it carries over like the rest.
+
 ## Favourites, goals and the month review
 
 - **Favourites:** the ★ row on the Add screen logs a purchase in one tap, and Undo appears for a few seconds in case you tapped by mistake. Save one from the Add screen with "☆ Save … as a favourite", or add suggestions in Budget → Favourites. Suggestions are purchases you've made 3 or more times at the same amount.

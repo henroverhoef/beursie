@@ -206,7 +206,7 @@ function blankState(){
       {id:'fund',name:'Lumpsum fund',group:'Saving',budget:0,fixed:true,fund:true},
     ],
     recurring:[], rules:[], tx:[], posted:{}, alerted:{},
-    favs:[], goals:[], goalMoves:[], reviewed:{}, rolled:{}, covered:{},
+    favs:[], goals:[], goalMoves:[], reviewed:{}, rolled:{}, covered:{}, moves:[],
     drive:{ clientId:'', fileId:null, last:null, connected:false, auto:true } };
 }
 
@@ -280,7 +280,7 @@ function carryIn(c, p){
   if (!c.carry || c.fund) return 0;
   const mk = c.id + '|' + p.key; if (mk in carryMemo) return carryMemo[mk];
   const from = carryStart(c); let sum = 0;
-  if (from) for (let q = shiftPeriod(p, -1), n = 0; q.key >= from && n < 240; q = shiftPeriod(q, -1), n++) sum += budgetAt(c, q) - (spentBy(q)[c.id]||0);
+  if (from) for (let q = shiftPeriod(p, -1), n = 0; q.key >= from && n < 240; q = shiftPeriod(q, -1), n++) sum += baseFor(c, q) - (spentBy(q)[c.id]||0);
   return carryMemo[mk] = round2(sum);
 }
 /* A category's usual monthly amount in period p. c.budget is the amount now;
@@ -291,7 +291,18 @@ function budgetAt(c, p){
   for (const e of c.bh || []) if (p.key < e.before && (!best || e.before < best.before)) best = e;
   return best ? +best.b || 0 : +c.budget || 0;
 }
-const budgetFor = (c, p) => { p = p || periodOf(today()); return round2(budgetAt(c, p) + carryIn(c, p)); };
+/* Moves: money shifted for one month from a fixed category that came in under
+   (or over) its amount, to or from another category or the lumpsum fund.
+   { id, p: period key, from, to: category id or '@fund', amount, txId? }. A move
+   to or from the fund has a transaction; if that's deleted the move no longer counts. */
+const movesIn = p => (S.moves || []).filter(m => m.p === p.key && (!m.txId || S.tx.some(t => t.id === m.txId)));
+function moveAdj(c, p){
+  let a = 0;
+  for (const m of movesIn(p)){ if (m.to === c.id || (m.to === '@fund' && c.fund)) a += m.amount; if (m.from === c.id) a -= m.amount; }
+  return round2(a);
+}
+const baseFor = (c, p) => round2(budgetAt(c, p) + moveAdj(c, p)); // usual budget plus this month's moves, no carry-over
+const budgetFor = (c, p) => { p = p || periodOf(today()); return round2(baseFor(c, p) + carryIn(c, p)); };
 function setBudget(c, v, earlierToo){
   const cur = periodOf(today()).key;
   if (earlierToo) delete c.bh;
@@ -1018,7 +1029,7 @@ function trendChart(){
   const vals = ps.map(p => { const sp = spentBy(p); return flex.reduce((a,c)=>a+(sp[c.id]||0),0); });
   const max = Math.max(budget, ...vals, 1) * 1.1, W = 340, H = 150, top = 10, bot = 22, left = 4, bw = (W - left) / ps.length;
   const y = v => top + (H - top - bot) * (1 - v / max);
-  const bars = ps.map((p,i) => { const v = vals[i], x = left + i*bw + bw*0.2, w = bw*0.6, pb = flex.reduce((a,c)=>a+budgetAt(c,p),0), over = pb && v > pb;
+  const bars = ps.map((p,i) => { const v = vals[i], x = left + i*bw + bw*0.2, w = bw*0.6, pb = flex.reduce((a,c)=>a+baseFor(c,p),0), over = pb && v > pb;
     return `<rect x="${x}" y="${y(v)}" width="${w}" height="${Math.max(0, H-bot-y(v))}" rx="3" style="fill:var(--${over?'bad':'accent'});opacity:${i===5?1:.55}"/>
             <text x="${x+w/2}" y="${H-6}" text-anchor="middle">${MONTHS[p.end.getMonth()]}</text>
             ${v?`<text x="${x+w/2}" y="${y(v)-4}" text-anchor="middle">${Math.round(v/100)/10}k</text>`:''}`; }).join('');
@@ -1073,6 +1084,8 @@ function renderHistory(){
     const n = e.target.closest('[data-nav]'); if (n){ histPeriod = shiftPeriod(p, +n.dataset.nav); renderHistory(); return; }
     const f = e.target.closest('[data-f]'); if (f){ histFilter = f.dataset.f; renderHistory(); f.scrollIntoView && f.scrollIntoView({ block:'nearest', inline:'center' }); return; }
     const co = e.target.closest('[data-carryout]'); if (co){ carryOut(catById(co.dataset.carryout)); return; }
+    const mv = e.target.closest('[data-move]'); if (mv){ doMove(catById(mv.dataset.move), histPeriod || periodOf(today()), mv.dataset.dir === 'under', app.querySelector('#mvTo').value, round2(parseFloat(app.querySelector('#mvAmt').value) || 0)); return; }
+    const um = e.target.closest('[data-unmove]'); if (um){ const m = S.moves.find(x => x.id === um.dataset.unmove); if (m){ S.moves = S.moves.filter(x => x !== m); if (m.txId) S.tx = S.tx.filter(t => t.id !== m.txId); save(); render(); toast('Move undone.'); } return; }
     const ad = e.target.closest('[data-add]'); if (ad){ const c = catById(ad.dataset.add); startAdd(c && c.id, +ad.dataset.amt || 0, ad.dataset.kind); return; }
     const t = e.target.closest('[data-tx]'); if (t) editTx(S.tx.find(x => x.id === t.dataset.tx));
   };
@@ -1092,7 +1105,35 @@ function histHeader(p){
     <div class="row between"><span class="${left<0?'danger':'muted'}" style="font-size:.88rem">${left>=0?`${R(left)} ${due?'still to pay':'left'}`:`${R(-left)} over budget`}</span>
     ${isNow ? `<button class="ghost" data-add="${c.id}" data-amt="${due?left:0}">${due?`+ Record ${R(left)}`:'+ Add'}</button>` : ''}</div>
     ${cin ? `<div class="row between" style="border-top:1px solid var(--line);padding-top:8px;gap:10px;flex-wrap:wrap"><span class="muted" style="font-size:.85rem">${cin > 0 ? `Includes ${R(cin)} carried over from earlier months. Usual budget: ${R(budgetAt(c, p))}.` : `${R(-cin)} overspent in earlier months comes off this month.`}</span>
-      ${isNow ? `<button class="ghost" data-carryout="${c.id}">${cin > 0 ? `Pay ${R(cin)} into lumpsum` : `Cover ${R(-cin)} from lumpsum`}</button>` : ''}</div>` : ''}</div>`;
+      ${isNow ? `<button class="ghost" data-carryout="${c.id}">${cin > 0 ? `Pay ${R(cin)} into lumpsum` : `Cover ${R(-cin)} from lumpsum`}</button>` : ''}</div>` : ''}
+    ${moveHTML(c, p, s, left)}</div>`;
+}
+function moveHTML(c, p, s, left){
+  const name = id => id === '@fund' ? 'the lumpsum fund' : (catById(id) || {}).name || 'a removed category';
+  const list = movesIn(p).filter(m => m.from === c.id || m.to === c.id || (m.to === '@fund' && c.fund)).map(m => {
+    const txt = m.from === c.id ? `Moved ${R(m.amount)} to ${esc(name(m.to))}` : m.from === '@fund' ? `Covered ${R(m.amount)} from the lumpsum fund` : `Includes ${R(m.amount)} moved from ${esc(name(m.from))}`;
+    return `<div class="row between" style="gap:10px"><span class="muted" style="font-size:.85rem">${txt}</span><button class="link" data-unmove="${m.id}">Undo</button></div>`; }).join('');
+  let form = '';
+  if (c.fixed && !c.fund && s > 0 && Math.abs(left) >= 1){
+    const under = left > 0, fc = S.categories.find(x => x.fund);
+    const opts = (fc ? [['@fund', 'Lumpsum fund']] : []).concat(S.categories.filter(x => x !== c && !x.fund).map(x => [x.id, x.name]));
+    form = `<div class="stack" style="gap:6px"><span class="muted" style="font-size:.85rem">${under ? `${esc(c.name)} came in ${R(left)} under this month. Move the difference to:` : `${esc(c.name)} came in ${R(-left)} over this month. Cover the difference from:`}</span>
+      <div class="row" style="gap:8px"><input type="number" inputmode="decimal" id="mvAmt" value="${Math.abs(left)}" aria-label="Amount" style="width:96px;flex:none"><select id="mvTo" aria-label="${under ? 'Move to' : 'Cover from'}" style="flex:1">${opts.map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join('')}</select>
+      <button class="ghost" data-move="${c.id}" data-dir="${under ? 'under' : 'over'}">${under ? 'Move' : 'Cover'}</button></div></div>`;
+  }
+  return list || form ? `<div class="stack" style="border-top:1px solid var(--line);padding-top:8px;gap:8px">${list}${form}</div>` : '';
+}
+function doMove(c, p, under, target, amt){
+  const fc = S.categories.find(x => x.fund); if (!(amt > 0) || !target) return;
+  const m = { id:uid(), p:p.key, from: under ? c.id : target, to: under ? target : c.id, amount:amt };
+  const date = p.key === periodOf(today()).key ? iso(today()) : iso(p.end);
+  S.moves = S.moves || []; S.moves.push(m);
+  if (target === '@fund'){
+    const t = under ? { id:uid(), date, amount:amt, kind:'expense', catId:fc.id, note:`${c.name} came in under`, source:'move' }
+                    : { id:uid(), date, amount:amt, kind:'expense', catId:c.id, fromFund:true, note:`${c.name} came in over, covered from lumpsum`, source:'move' };
+    m.txId = t.id; recordTx(t);
+  } else { save(); toast(under ? `Moved ${R(amt)} to ${catById(target).name} for this month.` : `Took ${R(amt)} from ${catById(target).name} to cover ${c.name}.`); }
+  render();
 }
 function editTx(t){
   if (!t) return;
@@ -1369,7 +1410,7 @@ function renderReview(){
   const carried = round2(rows.filter(r => isFlex(r.c) && r.c.carry).reduce((a,r) => a + r.d, 0));
   const rollLeft = round2(flexLeft - carried); // carry-over categories keep their leftover
   // The month is judged against the usual monthly budgets: carried-over money neither hides nor adds an overspend.
-  const monthBudget = round2(S.categories.filter(isFlex).reduce((a,c) => a + budgetAt(c, p), 0)), monthLeft = round2(monthBudget - flexSpent);
+  const monthBudget = round2(S.categories.filter(isFlex).reduce((a,c) => a + baseFor(c, p), 0)), monthLeft = round2(monthBudget - flexSpent);
   const best = rows.filter(r => isFlex(r.c) && r.b > 0 && r.d > 0).sort((x,y) => y.d - x.d)[0];
   const worst = rows.filter(r => r.d < -0.5).sort((x,y) => x.d - y.d)[0];
   const isPast = p.end < today(), done = S.reviewed[p.key];
