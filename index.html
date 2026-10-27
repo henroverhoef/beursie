@@ -280,10 +280,24 @@ function carryIn(c, p){
   if (!c.carry || c.fund) return 0;
   const mk = c.id + '|' + p.key; if (mk in carryMemo) return carryMemo[mk];
   const from = carryStart(c); let sum = 0;
-  if (from) for (let q = shiftPeriod(p, -1), n = 0; q.key >= from && n < 240; q = shiftPeriod(q, -1), n++) sum += (+c.budget||0) - (spentBy(q)[c.id]||0);
+  if (from) for (let q = shiftPeriod(p, -1), n = 0; q.key >= from && n < 240; q = shiftPeriod(q, -1), n++) sum += budgetAt(c, q) - (spentBy(q)[c.id]||0);
   return carryMemo[mk] = round2(sum);
 }
-const budgetFor = (c, p) => round2((+c.budget||0) + carryIn(c, p || periodOf(today())));
+/* A category's usual monthly amount in period p. c.budget is the amount now;
+   c.bh keeps older amounts as { before: period key, b: amount } when a change
+   was made "from this month on" only. */
+function budgetAt(c, p){
+  let best = null;
+  for (const e of c.bh || []) if (p.key < e.before && (!best || e.before < best.before)) best = e;
+  return best ? +best.b || 0 : +c.budget || 0;
+}
+const budgetFor = (c, p) => { p = p || periodOf(today()); return round2(budgetAt(c, p) + carryIn(c, p)); };
+function setBudget(c, v, earlierToo){
+  const cur = periodOf(today()).key;
+  if (earlierToo) delete c.bh;
+  else if (v !== (+c.budget||0)){ c.bh = c.bh || []; if (!c.bh.some(e => e.before === cur)) c.bh.push({ before:cur, b:+c.budget||0 }); }
+  c.budget = v;
+}
 const essentials = () => S.categories.filter(c => c.group==='Needs' || c.group==='Giving').reduce((a,c)=>a+(+c.budget||0),0);
 const floorAmt = () => essentials() * (+S.monthsCover||0);
 function summary(p){
@@ -791,6 +805,25 @@ function autoAllocate(t){
   }
   return parts.length ? `Goals: ${parts.join(', ')}.` : '';
 }
+function budgetChangeSheet(c, v){ // a carry-over category with money carried: does the new amount apply to earlier months too?
+  const cur = periodOf(today()), old = +c.budget || 0, keep = JSON.stringify(c);
+  const avail = earlierToo => { setBudget(c, v, earlierToo); carryMemo = {}; const r = budgetFor(c, cur); Object.keys(c).forEach(k => delete c[k]); Object.assign(c, JSON.parse(keep)); carryMemo = {}; return r; };
+  const aAll = avail(true), aNew = avail(false), cin = carryIn(c, cur);
+  const N = x => `<span style="white-space:nowrap">${R(x)}</span>`;
+  const was = cin > 0 ? `${N(cin)} left over` : `${N(-cin)} overspent`;
+  sheet(`<div class="stack">
+    <h2>Change ${esc(c.name)} from ${N(old)} to ${N(v)}?</h2>
+    <p class="muted" style="margin:0;font-size:.88rem">${esc(c.name)} carries ${was} from earlier months. Should ${N(v)} count for those months too?</p>
+    <button class="ghost" id="bcAll" style="padding:12px">Earlier months too<br><span style="font-weight:500;font-size:.85rem">They’re worked out at ${N(v)}, so you have ${N(aAll)} this month</span></button>
+    <button class="ghost" id="bcNew" style="padding:12px">Only from this month on<br><span style="font-weight:500;font-size:.85rem">Earlier months stay at ${N(old)}, so you have ${N(aNew)} this month</span></button>
+    <button class="link" id="bcNo" style="align-self:center">Cancel</button>
+  </div>`, sh => {
+    const done = earlierToo => { setBudget(c, v, earlierToo); save(); closeSheet(); renderBudget(); toast(`${c.name}: ${R(budgetFor(c, cur))} to use this month.`); };
+    sh.querySelector('#bcAll').onclick = () => done(true);
+    sh.querySelector('#bcNew').onclick = () => done(false);
+    sh.querySelector('#bcNo').onclick = () => { closeSheet(); renderBudget(); };
+  });
+}
 function carryOut(c){ // settles the carry-over with the lumpsum fund; this month starts at the plain budget again
   const fc = S.categories.find(x => x.fund), amt = carryIn(c, periodOf(today()));
   if (!fc) return toast('Tick "Fund" on one category in the Budget tab first.', 'warn');
@@ -985,7 +1018,7 @@ function trendChart(){
   const vals = ps.map(p => { const sp = spentBy(p); return flex.reduce((a,c)=>a+(sp[c.id]||0),0); });
   const max = Math.max(budget, ...vals, 1) * 1.1, W = 340, H = 150, top = 10, bot = 22, left = 4, bw = (W - left) / ps.length;
   const y = v => top + (H - top - bot) * (1 - v / max);
-  const bars = ps.map((p,i) => { const v = vals[i], x = left + i*bw + bw*0.2, w = bw*0.6, over = budget && v > budget;
+  const bars = ps.map((p,i) => { const v = vals[i], x = left + i*bw + bw*0.2, w = bw*0.6, pb = flex.reduce((a,c)=>a+budgetAt(c,p),0), over = pb && v > pb;
     return `<rect x="${x}" y="${y(v)}" width="${w}" height="${Math.max(0, H-bot-y(v))}" rx="3" style="fill:var(--${over?'bad':'accent'});opacity:${i===5?1:.55}"/>
             <text x="${x+w/2}" y="${H-6}" text-anchor="middle">${MONTHS[p.end.getMonth()]}</text>
             ${v?`<text x="${x+w/2}" y="${y(v)-4}" text-anchor="middle">${Math.round(v/100)/10}k</text>`:''}`; }).join('');
@@ -1058,7 +1091,7 @@ function histHeader(p){
     <div class="bar" style="height:8px"><i class="${st==='bad'?'bad':st==='warn'&&!c.fixed?'warn':''}" style="width:${b?Math.min(100,s/b*100):(s?100:0)}%"></i></div>
     <div class="row between"><span class="${left<0?'danger':'muted'}" style="font-size:.88rem">${left>=0?`${R(left)} ${due?'still to pay':'left'}`:`${R(-left)} over budget`}</span>
     ${isNow ? `<button class="ghost" data-add="${c.id}" data-amt="${due?left:0}">${due?`+ Record ${R(left)}`:'+ Add'}</button>` : ''}</div>
-    ${cin ? `<div class="row between" style="border-top:1px solid var(--line);padding-top:8px;gap:10px;flex-wrap:wrap"><span class="muted" style="font-size:.85rem">${cin > 0 ? `Includes ${R(cin)} carried over from earlier months. Usual budget: ${R(+c.budget||0)}.` : `${R(-cin)} overspent in earlier months comes off this month.`}</span>
+    ${cin ? `<div class="row between" style="border-top:1px solid var(--line);padding-top:8px;gap:10px;flex-wrap:wrap"><span class="muted" style="font-size:.85rem">${cin > 0 ? `Includes ${R(cin)} carried over from earlier months. Usual budget: ${R(budgetAt(c, p))}.` : `${R(-cin)} overspent in earlier months comes off this month.`}</span>
       ${isNow ? `<button class="ghost" data-carryout="${c.id}">${cin > 0 ? `Pay ${R(cin)} into lumpsum` : `Cover ${R(-cin)} from lumpsum`}</button>` : ''}</div>` : ''}</div>`;
 }
 function editTx(t){
@@ -1192,7 +1225,11 @@ function renderBudget(){
   app.querySelector('#bSal').onchange = e => { S.salary = num(e.target.value); save(); renderBudget(); };
   app.querySelectorAll('.edrow[data-i]').forEach(row => row.addEventListener('change', e => {
     const c = S.categories[+row.dataset.i], f = e.target.dataset.f; if (!f) return;
-    if (f === 'budget') c.budget = num(e.target.value);
+    if (f === 'budget'){
+      const v = num(e.target.value), cur = periodOf(today()), cin = carryIn(c, cur);
+      if (c.carry && cin && v !== (+c.budget||0)) return budgetChangeSheet(c, v);
+      setBudget(c, v, false);
+    }
     else if (f === 'fixed' || f === 'fund') c[f] = e.target.checked;
     else if (f === 'carry'){ c.carry = e.target.checked; if (c.carry) c.carryFrom = periodOf(today()).key; } // counts from this month on
     else c[f] = e.target.value.trim() || c[f];
@@ -1332,7 +1369,7 @@ function renderReview(){
   const carried = round2(rows.filter(r => isFlex(r.c) && r.c.carry).reduce((a,r) => a + r.d, 0));
   const rollLeft = round2(flexLeft - carried); // carry-over categories keep their leftover
   // The month is judged against the usual monthly budgets: carried-over money neither hides nor adds an overspend.
-  const monthBudget = round2(S.categories.filter(isFlex).reduce((a,c) => a + (+c.budget||0), 0)), monthLeft = round2(monthBudget - flexSpent);
+  const monthBudget = round2(S.categories.filter(isFlex).reduce((a,c) => a + budgetAt(c, p), 0)), monthLeft = round2(monthBudget - flexSpent);
   const best = rows.filter(r => isFlex(r.c) && r.b > 0 && r.d > 0).sort((x,y) => y.d - x.d)[0];
   const worst = rows.filter(r => r.d < -0.5).sort((x,y) => x.d - y.d)[0];
   const isPast = p.end < today(), done = S.reviewed[p.key];

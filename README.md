@@ -38,6 +38,8 @@ Tick **Carry over** on a category in **Budget → Categories** and what you don'
 
 The Overview shows how much each category has carried, e.g. "+R1,000 carried". When you want the money out, tap the category, then **Pay R… into lumpsum**. That records a contribution to your lumpsum fund (do the same transfer in your banking app) and the category starts again at its usual budget. Deleting that entry in History undoes it. If the category carried an overspend instead (say R1,600 of R1,500, so next month is 0 / R1,400), the button is **Cover R100 from lumpsum**: it takes the R100 out of the fund and the category goes back to its usual budget.
 
+If you change the amount of a carry-over category that has money carried, Beursie asks whether the new amount counts for earlier months too. Take R100 overspent on a R1,500 budget, changed to R1,600: **Earlier months too** means you weren't over, so you have R1,600 this month. **Only from this month on** keeps the R100 overspend, so you have R1,500. Budget changes for other categories apply from this month on, so past month reviews keep the budgets they had.
+
 The month review judges each month against your usual monthly budgets, so carried money neither hides nor adds an overspend. For example, spending R1,600 of a R1,500 hobbies budget makes the month R100 over, even if R3,000 had carried up. Spending R1,400 makes it R100 under, even if an earlier overspend left only R1,000. **Roll over** and **Cover the overspend** only use categories that don't carry over, because carry-over categories settle their own money.
 
 ## Favourites, goals and the month review
